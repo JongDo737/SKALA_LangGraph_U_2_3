@@ -1,4 +1,4 @@
-# 작성자: 김다빈
+# 작성자: 김가빈
 # 파일 설명: 투자 평가 결과를 고정 5쪽 한국어 PDF로 출력한다.
 
 """투자 평가 결과를 고정 5쪽 한국어 PDF로 출력한다.
@@ -672,10 +672,14 @@ def build_report_payload(graph_state: dict[str, Any]) -> dict[str, Any]:
         ),
         "next_check": "DART 재무 수치와 웹 검색 근거가 최신인지 확인합니다.",
         "analysis_headline": _clip(
-            market.get("subdomain") or featured.get("subdomain") or "에너지 인프라 후보 분석",
+            market.get("subdomain")
+            or featured.get("subdomain")
+            or "에너지 인프라 후보 분석",
             60,
         ),
-        "market_headline": _clip(short_market or "시장 성장과 기업의 실제 기회를 구분합니다", 60),
+        "market_headline": _clip(
+            short_market or "시장 성장과 기업의 실제 기회를 구분합니다", 60
+        ),
         "decision_headline": _clip(
             featured_judgement.get("reason") or "적합·보류 근거를 함께 확인합니다",
             60,
