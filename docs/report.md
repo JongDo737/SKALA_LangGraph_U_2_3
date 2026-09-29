@@ -1,6 +1,13 @@
 # 투자 보고서 입력 계약 (초안)
 
-`agents/report.py`는 앞 에이전트의 판단을 새로 계산하지 않고 PDF에 배치합니다. 교수님 실습 설명의 보고서 조건은 첫 장 SUMMARY에 전체 판단의 결론을 문서 소개 없이 A4 반 페이지 이내로 요약하고, 모든 후보를 보류하면 그 이유를 적으며, 마지막 장 REFERENCE에 실제 사용한 자료만 넣고, 전체를 5장 이내로 구성하는 것입니다. 현재 SUMMARY는 선정 기업, 추천 근거 또는 보류 이유, 추가 판단, 핵심 위험, 다음 판단 조건과 후보 수를 표시합니다. 팀의 LangGraph State가 확정되면 `generate_report`에 전달하는 필드 이름을 맞춥니다.
+`agents/report.py`는 앞 에이전트의 판단을 새로 계산하지 않고 PDF에 배치합니다. 교수님 실습 설명의 보고서 조건은 첫 장 SUMMARY에 전체 판단의 결론을 문서 소개 없이 A4 반 페이지 이내로 요약하고, 모든 후보를 보류하면 그 이유를 적으며, 마지막 장 REFERENCE에 실제 사용한 자료만 넣고, 전체를 5장 이내로 구성하는 것입니다. 현재 SUMMARY는 선정 기업, 추천 근거 또는 보류 이유, 추가 판단, 핵심 위험, 다음 판단 조건과 후보 수를 표시합니다.
+
+LangGraph에서는 `app.py`의 `report_node`가 `build_report_payload(state)`로 GraphState를 아래 계약으로 변환한 뒤 `generate_report`를 호출합니다. 변환에 쓰는 원천 데이터는 다음과 같습니다.
+
+- DART: `financial_summary`, `dart_viewer_link`, `estimated_investment_stage`
+- RAG/시장 브리지: `market`, `description`, `subdomain`
+- 경쟁사: `competitor_research` / `competition`
+- 투자 판단: `judgement` (`decision`, `reason`, `investment_reasons`, `external_market_assessment`)
 
 ```bash
 python -m pip install -r requirements-report.txt

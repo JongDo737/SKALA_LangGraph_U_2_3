@@ -1,52 +1,95 @@
 # 작성자: 통합 담당자 신종민
 # 파일 설명: 팀원이 구현한 각 에이전트 노드를 LangGraph로 연결하고,
-# 목표 기업 수를 충족할 때까지 스타트업 탐색 단계를 반복합니다.
+# 목표 기업 수를 충족할 때까지 DART 탐색을 반복합니다.
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-from copy import deepcopy
+import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from langchain_teddynote.graphs import visualize_graph
 from langgraph.graph import END, START, StateGraph
 
+from agents.compitition import competition_node
 from agents.dart import dart_lookup_node, print_companies_for_rag
+from agents.judge import judgement_node
+from agents.market_bridge import market_bridge_node
+from agents.report import build_report_payload, generate_report
 from agents.startup_screen import screen_startups_node
-from config import DEFAULT_COMPANY_COUNT, DEFAULT_MAX_SEARCH_ATTEMPTS
+from config import DEFAULT_COMPANY_COUNT, DEFAULT_MAX_SEARCH_ATTEMPTS, DEFAULT_WACC
 from state import GraphState
 
+# rag.py는 담당자 파일이므로 직접 수정하지 않습니다.
+# 구현이 있으면 우선 사용하고, 없으면 market_bridge로 RAG 계약을 맞춥니다.
 try:
     from agents.rag import market_research_node as _rag_market_research_node
-except ImportError:  # RAG 담당 구현 전이어도 그래프는 동작하게 둡니다.
+except ImportError:
     _rag_market_research_node = None
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-COMPANY_DATA_PATH = PROJECT_ROOT / "data" / "companies.json"
+LOG_DIR = PROJECT_ROOT / "outputs" / "logs"
+
+
+class _TeeStream:
+    """터미널과 로그 파일에 동시에 출력합니다."""
+
+    def __init__(self, primary: TextIO, secondary: TextIO) -> None:
+        self.primary = primary
+        self.secondary = secondary
+
+    def write(self, data: str) -> int:
+        self.primary.write(data)
+        self.secondary.write(data)
+        self.primary.flush()
+        self.secondary.flush()
+        return len(data)
+
+    def flush(self) -> None:
+        self.primary.flush()
+        self.secondary.flush()
+
+    def isatty(self) -> bool:
+        return bool(getattr(self.primary, "isatty", lambda: False)())
+
+    def fileno(self) -> int:
+        return self.primary.fileno()
+
+
+def setup_print_logging(log_dir: Path | None = None) -> Path:
+    """모든 print/stdout/stderr를 ``outputs/logs/run_*.log``에도 남깁니다."""
+
+    target_dir = log_dir or LOG_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = target_dir / f"run_{stamp}.log"
+    log_file = log_path.open("a", encoding="utf-8")
+
+    sys.stdout = _TeeStream(sys.__stdout__, log_file)  # type: ignore[assignment]
+    sys.stderr = _TeeStream(sys.__stderr__, log_file)  # type: ignore[assignment]
+    print(f"[log] 실행 로그 파일: {log_path}")
+    return log_path
 
 
 # ---------------------------------------------------------------------------
-# 팀원별 노드 함수 연결 예정
+# 팀원별 노드 함수 연결
 # ---------------------------------------------------------------------------
-# 각 담당자가 아래 함수명과 입출력 규격에 맞춰 구현하면 주석을 해제합니다.
-#
-# from agents.compitition import competition_node
-# from agents.judge import judgement_node
-# from agents.report import report_node
-#
-# 스타트업 탐색과 TIPS 데이터 수집 함수의 위치가 정해지면 함께 연결합니다.
-#
-# from agents.search import startup_search_node
-# from agents.tips import tips_enrichment_node
+# 경쟁사·투자판단: agents/compitition.py, agents/judge.py
+# 시장성(RAG 계약): agents/market_bridge.py (rag.py는 담당자 영역)
+# 최종 보고서: agents/report.py + docs/report.md
 
 
 def _company_names(companies: list[dict[str, Any]]) -> list[str]:
     """로그에서 기업 객체 전체 대신 기업명만 간단히 표시합니다."""
 
-    return [str(company.get("name", "이름 없음")) for company in companies]
+    return [
+        str(company.get("company_name") or company.get("name") or "이름 없음")
+        for company in companies
+    ]
 
 
 def _append_log(state: GraphState, message: str) -> list[str]:
@@ -68,196 +111,78 @@ def _print_node_result(
     print(f"  반환 값    : {returned}")
 
 
-def _load_scenario_companies() -> list[dict[str, Any]]:
-    """시나리오에서 사용할 에너지 관련 기업을 원본 JSON에서 읽습니다."""
-
-    payload = json.loads(COMPANY_DATA_PATH.read_text(encoding="utf-8"))
-    companies = payload.get("data", [])
-    return [
-        company
-        for company in companies
-        if "ENERGY" in str(company.get("industry12Codes", ""))
-        or "ECO" in str(company.get("industry12Codes", ""))
-    ]
-
-
-def startup_search_node(state: GraphState) -> dict[str, Any]:
-    """목표 수에서 부족한 만큼 새로운 기업 후보를 추가로 찾습니다."""
-
-    # TODO: 담당자가 웹 또는 API 기반 스타트업 탐색 함수로 교체합니다.
-    attempt = state.get("search_attempts", 0) + 1
-    target_count = state.get("target_company_count", DEFAULT_COMPANY_COUNT)
-    selected_count = len(state.get("eligible_companies", []))
-    needed_count = max(target_count - selected_count, 0)
-
-    all_companies = _load_scenario_companies()
-    seen_ids = set(state.get("seen_company_ids", []))
-    candidates = [
-        company for company in all_companies if company.get("id") not in seen_ids
-    ][:needed_count]
-    updated_seen_ids = [
-        *state.get("seen_company_ids", []),
-        *(str(company.get("id", "")) for company in candidates),
-    ]
-    message = (
-        f"{attempt}차 탐색: {selected_count}/{target_count}개 보유, "
-        f"부족한 {needed_count}개를 추가 탐색했습니다."
-    )
-
-    _print_node_result(
-        "search_startups",
-        received=(
-            f"누적 기업={selected_count}개, 부족 기업={needed_count}개, "
-            f"search_attempts={state.get('search_attempts', 0)}"
-        ),
-        returned=f"추가 후보={_company_names(candidates)}",
-    )
-    return {
-        "candidate_pool": candidates,
-        "seen_company_ids": updated_seen_ids,
-        "execution_log": _append_log(state, message),
-    }
-
-
-def tips_enrichment_node(state: GraphState) -> dict[str, Any]:
-    """후보 기업에 TIPS 수집 완료 표시를 추가해 다음 노드로 전달합니다."""
-
-    # TODO: 담당자가 TIPS 기업 정보 수집 함수로 교체합니다.
-    candidates = [
-        {**deepcopy(company), "scenario_tips_status": "collected"}
-        for company in state.get("candidate_pool", [])
-    ]
-    message = f"TIPS 정보가 보강된 후보 {len(candidates)}개를 전달했습니다."
-
-    _print_node_result(
-        "enrich_tips",
-        received=f"candidate_pool={_company_names(state.get('candidate_pool', []))}",
-        returned="scenario_tips_status=collected",
-    )
-    return {
-        "candidate_pool": candidates,
-        "execution_log": _append_log(state, message),
-    }
-
-
 def market_research_node(state: GraphState) -> dict[str, Any]:
-    """스크리닝을 통과한 DART JSON을 RAG로 넘기기 직전 데이터를 출력합니다."""
+    """DART(+스크리닝) 결과를 RAG 계약으로 맞춘 뒤 경쟁사 비교로 넘깁니다.
+
+    rag.py가 구현되어 있으면 그쪽을 쓰고, 아니면 market_bridge로
+    competition/judge가 기대하는 name·description·market·financials를 채웁니다.
+    """
 
     companies = list(state.get("eligible_companies", []))
     print_companies_for_rag(
         companies,
-        title="market_research 입력 = DART(+스크리닝) → RAG 전달 데이터",
+        title="market_research 입력 = DART(+스크리닝) 원본",
     )
 
     if callable(_rag_market_research_node):
-        return _rag_market_research_node(state)
+        result = _rag_market_research_node(state)
+        # rag 결과가 있어도 competition 입력 필드가 비면 bridge로 보강합니다.
+        bridged = market_bridge_node(
+            {
+                **state,
+                **result,
+                "eligible_companies": result.get(
+                    "eligible_companies",
+                    state.get("eligible_companies", []),
+                ),
+                "market_attempts": result.get(
+                    "market_attempts",
+                    state.get("market_attempts", 0),
+                ),
+            }
+        )
+        return {
+            **result,
+            **bridged,
+            "market_attempts": bridged.get("market_attempts"),
+            "next_stage": "compare_competition",
+        }
 
-    # RAG 담당 파일이 stub인 동안에도 그래프가 이어지도록 전달만 수행합니다.
-    attempt = int(state.get("market_attempts", 0)) + 1
-    names = _company_names(companies)
-    message = f"{attempt}차 시장성 평가: RAG 전달 기업 {len(companies)}개"
-    _print_node_result(
-        "market_research (app.py bridge)",
-        received=f"DART 기업={names}",
-        returned=f"RAG로 {len(companies)}개 전달 (rag.py 미구현 → pass-through)",
-    )
-    return {
-        "eligible_companies": companies,
-        "market_attempts": attempt,
-        "next_stage": "compare_competition",
-        "execution_log": _append_log(state, message),
-    }
-
-
-def competition_node(state: GraphState) -> dict[str, Any]:
-    """첫 경쟁사 비교에서 일부 기업이 탈락하는 상황을 재현합니다."""
-
-    # TODO: agents/compitition.py의 구현 함수로 교체합니다.
-    attempt = state.get("competition_attempts", 0) + 1
-    input_companies = list(state.get("eligible_companies", []))
-    rejected_count = 1 if attempt == 1 else 0
-    passed_companies = (
-        input_companies[:-rejected_count] if rejected_count else input_companies
-    )
-    rejected_companies = input_companies[-rejected_count:] if rejected_count else []
-    companies = [
-        {**deepcopy(company), "scenario_competition_status": "compared"}
-        for company in passed_companies
-    ]
-    message = (
-        f"{attempt}차 경쟁사 비교: 통과 {len(companies)}개, "
-        f"부적합 {len(rejected_companies)}개"
-    )
-
-    _print_node_result(
-        "compare_competition",
-        received=f"기업={_company_names(input_companies)}",
-        returned=(
-            f"통과={_company_names(companies)}, "
-            f"부적합={_company_names(rejected_companies)}"
-        ),
-    )
-    return {
-        "eligible_companies": companies,
-        "competition_attempts": attempt,
-        "next_stage": "judge_investment",
-        "execution_log": _append_log(state, message),
-    }
-
-
-def judgement_node(state: GraphState) -> dict[str, Any]:
-    """첫 투자 판단에서 일부 기업이 탈락하는 상황을 재현합니다."""
-
-    # TODO: agents/judge.py의 구현 함수로 교체합니다.
-    attempt = state.get("judgement_attempts", 0) + 1
-    input_companies = list(state.get("eligible_companies", []))
-    rejected_count = 1 if attempt == 1 else 0
-    passed_companies = (
-        input_companies[:-rejected_count] if rejected_count else input_companies
-    )
-    rejected_companies = input_companies[-rejected_count:] if rejected_count else []
-    companies = [
-        {**deepcopy(company), "scenario_judgement": "suitable"}
-        for company in passed_companies
-    ]
-    message = (
-        f"{attempt}차 투자 판단: 적합 {len(companies)}개, "
-        f"부적합 {len(rejected_companies)}개"
-    )
-
-    _print_node_result(
-        "judge_investment",
-        received=f"기업={_company_names(input_companies)}",
-        returned=(
-            f"적합={_company_names(companies)}, "
-            f"부적합={_company_names(rejected_companies)}"
-        ),
-    )
-    return {
-        "eligible_companies": companies,
-        "judgement_attempts": attempt,
-        "next_stage": "generate_report",
-        "execution_log": _append_log(state, message),
-    }
+    return market_bridge_node(state)
 
 
 def report_node(state: GraphState) -> dict[str, Any]:
-    """최종 기업 목록을 보고서 노드가 받는 상황을 재현합니다."""
+    """docs/report.md 계약으로 State를 변환한 뒤 PDF 보고서를 생성합니다."""
 
-    # TODO: agents/report.py의 구현 함수로 교체합니다.
-    companies = state.get("eligible_companies", [])
-    message = f"최종 보고서에 기업 {len(companies)}개를 전달했습니다."
+    companies = list(state.get("eligible_companies", []))
+    report_payload = build_report_payload(state)
+    output_path = PROJECT_ROOT / "outputs" / "investment_report.pdf"
+    try:
+        path = generate_report(report_payload, output_path)
+        status = "completed"
+        message = (
+            f"최종 보고서 생성 완료: 기업 {len(companies)}개 → {path}"
+        )
+        returned = f"report_path={path}"
+    except Exception as error:
+        path = output_path
+        status = "failed"
+        message = f"최종 보고서 생성 실패: {error}"
+        returned = f"error={error}"
+        print(f"  [report] {message}")
 
     _print_node_result(
         "generate_report",
         received=f"최종 기업={_company_names(companies)}",
-        returned="status=completed",
+        returned=returned,
     )
     return {
         "evaluated_companies": companies,
-        "status": "completed",
-        "report_path": "outputs/scenario_investment_report.pdf",
+        "report_payload": report_payload,
+        "status": status,
+        "report_path": str(path),
         "execution_log": _append_log(state, message),
+        "workflow_errors": [message] if status == "failed" else [],
     }
 
 
@@ -319,7 +244,7 @@ def route_by_company_count(
     selected_count = len(state.get("eligible_companies", []))
     target_count = state.get("target_company_count", DEFAULT_COMPANY_COUNT)
 
-    # 목표 기업 수보다 적으면 스타트업 탐색 단계로 되돌아갑니다.
+    # 목표 기업 수보다 적으면 DART 탐색으로 되돌아갑니다.
     if selected_count < target_count:
         # 데이터 부족이나 API 오류로 인한 무한 루프를 막습니다.
         if state.get("search_attempts", 0) >= state.get(
@@ -344,66 +269,42 @@ def route_by_company_count(
 
 
 def build_workflow():
-    """빈 노드로 전체 흐름을 연결하고 실행 가능한 그래프로 컴파일합니다."""
+    """DART부터 시작하는 전체 흐름을 연결하고 실행 가능한 그래프로 컴파일합니다."""
 
     builder = StateGraph(GraphState)
 
     # -----------------------------------------------------------------------
     # 노드 등록
     # -----------------------------------------------------------------------
-    # 1. 스타트업 탐색 노드
-    #    웹 또는 API에서 에너지 도메인 스타트업 후보를 가져옵니다.
-    builder.add_node("search_startups", startup_search_node)
-
-    # 2. TIPS 정보 수집 노드
-    #    후보 기업의 TIPS 정보와 기본 기업 정보를 State에 저장합니다.
-    builder.add_node("enrich_tips", tips_enrichment_node)
-
-    # 3. DART 검색 노드
-    #    기업명을 DART에서 검색하고 조건을 통과한 기업을 누적합니다.
+    # 1. DART 검색 노드
     builder.add_node("lookup_dart", dart_lookup_node)
 
-    # 4. 스타트업 검증 노드
-    #    일반 중소기업을 걸러내고, 필요한 경우만 웹 검색으로 Series를 확정합니다.
+    # 2. 스타트업 검증 노드
     builder.add_node("screen_startups", screen_startups_node)
 
-    # 5. 기업 수 검증 노드
-    #    이 노드만 통합 담당자가 구현하며 목표 기업 수와 현재 수를 비교합니다.
+    # 3. 기업 수 검증 노드
     builder.add_node("validate_company_count", validate_company_count_node)
 
-    # 6. 시장성 평가 노드
-    #    검증된 스타트업 JSON을 RAG 입력으로 사용합니다.
+    # 4. 시장성 평가 노드
     builder.add_node("market_research", market_research_node)
 
-    # 7. 경쟁사 비교 노드
-    #    RAG 결과와 추가 웹 검색을 바탕으로 기업과 경쟁사를 비교합니다.
+    # 5. 경쟁사 비교 노드
     builder.add_node("compare_competition", competition_node)
 
-    # 8. 투자 판단 노드
-    #    VC·PE 투자 기준에 따라 적합, 부적합 또는 검토 필요로 판단합니다.
+    # 6. 투자 판단 노드
     builder.add_node("judge_investment", judgement_node)
 
-    # 9. 보고서 생성 노드
-    #    검증된 기업별 결과를 정해진 양식의 투자 보고서로 생성합니다.
+    # 7. 보고서 생성 노드
     builder.add_node("generate_report", report_node)
 
-    # 10. 기업 선택 실패 노드
-    #    최대 탐색 횟수 안에 목표 기업 수를 채우지 못했을 때 오류를 기록합니다.
+    # 8. 기업 선택 실패 노드
     builder.add_node("selection_failed", selection_failed_node)
 
     # -----------------------------------------------------------------------
     # 엣지 연결
     # -----------------------------------------------------------------------
-    # 시작 → 스타트업 탐색
-    builder.add_edge(START, "search_startups")
-
-    # 스타트업 탐색 → TIPS 정보 수집
-    builder.add_edge("search_startups", "enrich_tips")
-
-    # TIPS 정보 수집 → DART 검색
-    builder.add_edge("enrich_tips", "lookup_dart")
-
-    # DART 검색 → 스타트업 검증 → 기업 수 검증
+    # 시작 → DART 검색 → 스타트업 검증 → 기업 수 검증
+    builder.add_edge(START, "lookup_dart")
     builder.add_edge("lookup_dart", "screen_startups")
     builder.add_edge("screen_startups", "validate_company_count")
 
@@ -413,14 +314,13 @@ def build_workflow():
     builder.add_edge("judge_investment", "validate_company_count")
 
     # 기업 수 검증 후 조건 분기
-    # - 목표보다 적음: search_startups로 돌아가 부족한 기업을 추가 탐색
+    # - 목표보다 적음: lookup_dart로 돌아가 부족한 기업을 추가 탐색
     # - 목표 충족: 직전 노드가 State의 next_stage에 지정한 단계로 이동
     # - 최대 탐색 횟수 초과: selection_failed로 이동
     builder.add_conditional_edges(
         "validate_company_count",
         route_by_company_count,
         {
-            "search_startups": "search_startups",
             "lookup_dart": "lookup_dart",
             "screen_startups": "screen_startups",
             "market_research": "market_research",
@@ -431,10 +331,7 @@ def build_workflow():
         },
     )
 
-    # 보고서 생성 → 정상 종료
     builder.add_edge("generate_report", END)
-
-    # 기업 선택 실패 → 보고서 없이 종료
     builder.add_edge("selection_failed", END)
 
     return builder.compile()
@@ -459,12 +356,195 @@ def create_initial_state(company_count: int) -> GraphState:
         "dart_rejections": [],
         "dart_seen_corp_codes": [],
         "startup_rejections": [],
+        "judgement_rejections": [],
         "evaluated_companies": [],
         "workflow_errors": [],
         "execution_log": [],
+        "wacc": DEFAULT_WACC,
         "next_stage": "market_research",
         "status": "initialized",
     }
+
+
+def build_report_fixture_companies(count: int) -> list[dict[str, Any]]:
+    """judge 직후와 같은 형태의 더미 기업 State를 만듭니다. (report 단독 테스트용)"""
+
+    samples = [
+        ("한화솔라파워", "solar / PV", "적합", 72),
+        ("코리아로드태양광", "solar / PV", "보류", 65),
+        ("유니드에너지", "energy infrastructure", "보류", 63),
+        ("한뉴딜에너지", "energy infrastructure", "보류", 61),
+        ("지평선에너지", "energy infrastructure", "보류", 64),
+    ]
+    companies: list[dict[str, Any]] = []
+    for index in range(count):
+        name, subdomain, decision, score = samples[index % len(samples)]
+        if count > len(samples):
+            name = f"{name}-{index + 1}"
+        companies.append(
+            {
+                "id": f"fixture-{index + 1:03d}",
+                "corp_code": f"0000000{index + 1}",
+                "name": name,
+                "company_name": name,
+                "description": f"{name} 에너지·인프라 사업 개요 (report-only fixture)",
+                "subdomain": subdomain,
+                "country": "KR",
+                "estimated_investment_stage": "자산추정 Series A~B",
+                "dart_viewer_link": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo=fixture{index + 1}",
+                "financial_summary": {
+                    "자산총계": "8,930,578,215",
+                    "부채총계": "8,037,857,307",
+                    "자본총계": "892,720,908",
+                    "매출액": "1,189,911,112",
+                    "영업이익": "408,935,217",
+                    "당기순이익": "-17,077,150",
+                    "현금및현금성자산": "788,523,040",
+                    "이자부부채": "7,952,000,000",
+                    "이자비용": "426,742,639",
+                    "영업활동현금흐름": "417,435,473",
+                    "CAPEX": "-8,333,032",
+                    "유동자산": "896,314,426",
+                    "유동부채": "333,857,307",
+                },
+                "financials": [
+                    {
+                        "year": "2018",
+                        "자산총계": "9,111,895,258",
+                        "매출액": "1,181,859,977",
+                        "영업이익": "464,371,845",
+                        "당기순이익": "56,071,981",
+                        "자본총계": "909,798,058",
+                        "이자부부채": "8,116,000,000",
+                        "현금및현금성자산": "543,420,599",
+                        "영업활동현금흐름": "-3,987,771,524",
+                    },
+                    {
+                        "year": "2019",
+                        "자산총계": "8,930,578,215",
+                        "매출액": "1,189,911,112",
+                        "영업이익": "408,935,217",
+                        "당기순이익": "-17,077,150",
+                        "자본총계": "892,720,908",
+                        "이자부부채": "7,952,000,000",
+                        "현금및현금성자산": "788,523,040",
+                        "영업활동현금흐름": "417,435,473",
+                        "CAPEX": "-8,333,032",
+                    },
+                ],
+                "market": {
+                    "status": "fixture",
+                    "subdomain": subdomain,
+                    "description": f"{name} 관련 {subdomain} 시장 fixture 설명",
+                },
+                "competition": {
+                    "status": "complete",
+                    "found_competitor_count": 2,
+                    "requested_competitor_count": 2,
+                    "competitors": [
+                        {
+                            "name": f"{name} 경쟁사A",
+                            "evidence": "동일 도메인 사업 운영",
+                            "source_url": "https://example.com/comp-a",
+                        },
+                        {
+                            "name": f"{name} 경쟁사B",
+                            "evidence": "태양광·에너지 인프라 경쟁",
+                            "source_url": "https://example.com/comp-b",
+                        },
+                    ],
+                },
+                "competitor_research": {
+                    "status": "complete",
+                    "found_competitor_count": 2,
+                    "requested_competitor_count": 2,
+                    "competitors": [
+                        {
+                            "name": f"{name} 경쟁사A",
+                            "evidence": "동일 도메인 사업 운영",
+                            "source_url": "https://example.com/comp-a",
+                        },
+                        {
+                            "name": f"{name} 경쟁사B",
+                            "evidence": "태양광·에너지 인프라 경쟁",
+                            "source_url": "https://example.com/comp-b",
+                        },
+                    ],
+                },
+                "judgement": {
+                    "company": name,
+                    "decision": decision,
+                    "reason": (
+                        "외부 시장성과 VBM 판단이 모두 긍정적입니다."
+                        if decision == "적합"
+                        else "재무 또는 경쟁·외부시장 근거를 보완한 뒤 종합 판단해야 합니다."
+                    ),
+                    "external_market_score": score,
+                    "investment_reasons": (
+                        [f"외부 시장성 점수 {score}점", "경쟁사 조사 완료"]
+                        if decision == "적합"
+                        else []
+                    ),
+                    "vbm_assessment": {
+                        "conclusion": "긍정" if decision == "적합" else "주의",
+                        "conclusion_reason": (
+                            "계산 가능한 수익성·현금창출력·성장성 지표 중 다수가 양호합니다."
+                            if decision == "적합"
+                            else "계산 가능한 VBM 지표에서 가치 창출 근거가 충분하지 않습니다."
+                        ),
+                    },
+                    "external_market_assessment": {
+                        "scores": {
+                            "market_growth": {
+                                "score": min(score // 10, 10),
+                                "reason": "fixture 시장 성장 근거",
+                            }
+                        }
+                    },
+                },
+            }
+        )
+    return companies
+
+
+def create_report_only_state(
+    company_count: int,
+    *,
+    input_path: Path | None = None,
+) -> GraphState:
+    """judge까지 끝난 것과 같은 State로 report_node만 테스트합니다."""
+
+    state = create_initial_state(company_count)
+    if input_path is not None:
+        payload = json.loads(input_path.read_text(encoding="utf-8"))
+        if isinstance(payload.get("eligible_companies"), list):
+            companies = payload["eligible_companies"]
+        elif isinstance(payload, list):
+            companies = payload
+        else:
+            raise ValueError(
+                "JSON에 eligible_companies 배열이 있거나, 기업 배열 자체여야 합니다."
+            )
+        state["eligible_companies"] = companies[:company_count] or companies
+        if payload.get("wacc") is not None:
+            state["wacc"] = payload["wacc"]
+        if payload.get("judgement_payload"):
+            state["judgement_payload"] = payload["judgement_payload"]
+        if payload.get("competition_payload"):
+            state["competition_payload"] = payload["competition_payload"]
+    else:
+        state["eligible_companies"] = build_report_fixture_companies(company_count)
+
+    state["search_attempts"] = 1
+    state["market_attempts"] = 1
+    state["competition_attempts"] = 1
+    state["judgement_attempts"] = 1
+    state["next_stage"] = "generate_report"
+    state["status"] = "evaluating"
+    state["execution_log"] = [
+        "report-only 모드: judge 이전 단계를 건너뛰고 보고서만 생성합니다."
+    ]
+    return state
 
 
 def parse_args() -> argparse.Namespace:
@@ -477,6 +557,17 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_COMPANY_COUNT,
         help=f"평가할 기업 수 (기본값: {DEFAULT_COMPANY_COUNT})",
     )
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="DART~judge를 건너뛰고 최종 State 형식 fixture로 report만 생성합니다.",
+    )
+    parser.add_argument(
+        "--report-input",
+        type=Path,
+        default=None,
+        help="report-only 모드에서 사용할 JSON State 경로 (eligible_companies 포함)",
+    )
     return parser.parse_args()
 
 
@@ -487,11 +578,36 @@ app = build_workflow()
 def main() -> None:
     """전체 시나리오를 실행하고 State 변화와 그래프를 표시합니다."""
 
+    log_path = setup_print_logging()
     args = parse_args()
+
+    if args.report_only:
+        state = create_report_only_state(
+            args.company_count,
+            input_path=args.report_input,
+        )
+        print("=" * 70)
+        print("report-only 모드 - judge 건너뛰고 보고서만 생성")
+        print(f"기업 수           : {len(state.get('eligible_companies', []))}")
+        print(f"입력 JSON         : {args.report_input or '(내장 fixture)'}")
+        print(f"로그 파일         : {log_path}")
+        print("=" * 70)
+        result = report_node(state)
+        print("\n" + "=" * 70)
+        print("최종 State (report-only)")
+        print(f"  실행 상태       : {result.get('status')}")
+        print(f"  선택된 기업 수  : {len(state.get('eligible_companies', []))}")
+        print(f"  보고서 전달 기업: {len(result.get('evaluated_companies', []))}")
+        print(f"  보고서 경로     : {result.get('report_path', '생성 안 됨')}")
+        print(f"  로그 파일       : {log_path}")
+        print("=" * 70)
+        return
+
     initial_state = create_initial_state(args.company_count)
 
     print("=" * 70)
     print(f"시나리오 시작 - 목표 기업 수: {initial_state['target_company_count']}")
+    print(f"로그 파일         : {log_path}")
     print("=" * 70)
 
     # dart_lookup_node가 비동기 DART API를 사용하므로 전체 그래프도 비동기로 실행합니다.
@@ -507,6 +623,7 @@ def main() -> None:
     print(f"  선택된 기업 수  : {len(result.get('eligible_companies', []))}")
     print(f"  보고서 전달 기업: {len(result.get('evaluated_companies', []))}")
     print(f"  보고서 경로     : {result.get('report_path', '생성 안 됨')}")
+    print(f"  로그 파일       : {log_path}")
     print("=" * 70)
 
     # 노트북 예제와 같은 방식으로 연결된 노드와 엣지를 표시합니다.

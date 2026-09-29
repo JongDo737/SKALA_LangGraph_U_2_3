@@ -31,6 +31,8 @@ cache/
 *cache*.json
 data/*cache*.json
 
-# Generated reports
+# Generated reports and local artifacts
 outputs/*
 !outputs/.gitkeep
+data/pdfs/*
+!data/pdfs/.gitkeep
