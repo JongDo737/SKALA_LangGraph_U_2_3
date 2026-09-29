@@ -21,3 +21,7 @@ DART_FETCH_MULTIPLIER = 4
 
 # 스타트업 스크리닝 LLM 호출을 동시에 몇 개까지 보낼지 제한합니다.
 SCREENING_CONCURRENCY = 8
+
+# judge VBM의 ROIC-WACC 비교에 쓰는 기본 자본비용 가정입니다.
+# State에 wacc가 없으면 이 값을 사용합니다. (판단 임계값 자체는 변경하지 않음)
+DEFAULT_WACC = 0.10

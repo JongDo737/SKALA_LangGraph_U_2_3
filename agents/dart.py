@@ -3,7 +3,8 @@
 # DART 검색 결과를 JSON 형식으로 반환하며, 
 # 1) 외부 데이터 없이 오직 DART만으로 에너지 Seed~Series C 스타트업을 직접 탐색하는 파이프라인
 # 2) 특정 기업명 즉시 검색 및 재무제표 JSON 반환
-# 3) 공시자료 PDF 다운로드 및 LangChain PyPDFLoader 데이터 추출 기능을 담당합니다.
+# 3) 공시자료 PDF 다운로드 및 pdfplumber 기반 재무제표(표) 추출을 담당합니다.
+#    (텍스트 보조 로더는 PyPDFLoader를 fallback으로 유지합니다.)
 # 추가 담당: 프로젝트 설계 산출물 작성
 
 import os
@@ -16,9 +17,18 @@ import random
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import aiohttp
-from langchain_community.document_loaders import PyPDFLoader
+
+try:
+    import pdfplumber
+except ImportError:  # pragma: no cover
+    pdfplumber = None
+
+try:
+    from langchain_community.document_loaders import PyPDFLoader
+except ImportError:  # pragma: no cover
+    PyPDFLoader = None
 
 # dart.py를 직접 실행해도 프로젝트 루트의 state.py를 찾을 수 있게 합니다.
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +43,7 @@ from state import GraphState
 COMPANIES_JSON_PATH = os.path.join(PROJECT_ROOT, "data", "companies.json")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data")
 CORP_CODE_CACHE_FILE = os.path.join(CACHE_DIR, "corp_codes_cache.json")
-PDF_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs", "pdfs")
+PDF_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "pdfs")
 
 
 def load_dart_api_key() -> str:
@@ -211,21 +221,55 @@ class AsyncDartService:
 
 # DART-style Korean keys are primary; normalized English keys are also allowed.
 FINANCIAL_KEYS = {
-    "assets": ("자산총계", "total_assets"),
-    "liabilities": ("부채총계", "total_liabilities"),
-    "equity": ("자본총계", "total_equity"),
-    "revenue": ("매출액", "revenue", "수익(매출액)", "영업수익"),
-    "operating_profit": ("영업이익", "operating_income", "영업이익(손실)"),
-    "net_income": ("당기순이익", "net_income", "당기순이익(손실)"),
-    "tax_expense": ("법인세비용", "income_tax_expense", "법인세등"),
-    "cash": ("현금및현금성자산", "cash_and_cash_equivalents", "현금및현금성자산등"),
-    "debt": ("이자부부채", "이자부채", "interest_bearing_debt", "차입금"),
-    "interest_expense": ("이자비용", "interest_expense"),
-    "operating_cf": ("영업활동현금흐름", "operating_cash_flow", "영업활동으로인한현금흐름"),
-    "capex": ("CAPEX", "설비투자", "유형자산의취득", "유형자산의 취득", "capital_expenditure"),
+    "assets": ("자산총계", "total_assets", "자산 총계"),
+    "liabilities": ("부채총계", "total_liabilities", "부채 총계"),
+    "equity": ("자본총계", "total_equity", "자본 총계"),
+    "revenue": ("매출액", "revenue", "수익(매출액)", "영업수익", "영업 수익"),
+    "operating_profit": ("영업이익", "operating_income", "영업이익(손실)", "영업이익손실"),
+    "net_income": ("당기순이익", "net_income", "당기순이익(손실)", "당기순손실"),
+    "tax_expense": ("법인세비용", "income_tax_expense", "법인세등", "법인세 비용"),
+    "cash": ("현금및현금성자산", "cash_and_cash_equivalents", "현금및현금성자산등", "현금및현금성자산(주석"),
+    "debt": (
+        "이자부부채",
+        "이자부채",
+        "interest_bearing_debt",
+        "차입금",
+        "단기차입금",
+        "장기차입금",
+        "유동성장기차입금",
+        "유동성장기부채",
+        "사채",
+    ),
+    "interest_expense": ("이자비용", "interest_expense", "이자 비용"),
+    "operating_cf": (
+        "영업활동현금흐름",
+        "operating_cash_flow",
+        "영업활동으로인한현금흐름",
+        "영업활동으로 인한 현금흐름",
+        "영업활동으로인한현금흐름(간접법)",
+    ),
+    "capex": (
+        "CAPEX",
+        "설비투자",
+        "유형자산의취득",
+        "유형자산의 취득",
+        "유형자산취득",
+        "capital_expenditure",
+    ),
     "current_assets": ("유동자산", "current_assets"),
     "current_liabilities": ("유동부채", "current_liabilities"),
 }
+
+# 이자부부채로 합산할 세부 계정 (PDF에 '이자부부채' 한 줄이 없을 때 사용)
+DEBT_COMPONENT_ALIASES = (
+    "단기차입금",
+    "장기차입금",
+    "유동성장기차입금",
+    "유동성장기부채",
+    "사채",
+    "전환사채",
+    "차입금",
+)
 
 # 계정명 매칭용: 한글 1차 키 → 허용 별칭(공백·영문 포함)
 _ACCOUNT_ALIASES: Dict[str, tuple[str, ...]] = {
@@ -315,8 +359,229 @@ def _spaced_label_pattern(label: str) -> str:
     return r"\s*".join(chars)
 
 
+def _build_alias_lookup() -> Dict[str, str]:
+    """정규화된 계정명 → FINANCIAL_KEYS 한글 1차 키."""
+
+    lookup: Dict[str, str] = {}
+    for primary, aliases in _ACCOUNT_ALIASES.items():
+        for alias in aliases:
+            if re.fullmatch(r"[a-z_]+", alias):
+                continue
+            lookup[_normalize_account_name(alias)] = primary
+        lookup[_normalize_account_name(f"{primary}(손실)")] = primary
+    return lookup
+
+
+_ALIAS_LOOKUP = _build_alias_lookup()
+_DEBT_COMPONENT_NORMS = {_normalize_account_name(name) for name in DEBT_COMPONENT_ALIASES}
+
+
+def _format_amount(value: Optional[int]) -> Optional[str]:
+    if value is None:
+        return None
+    return f"{value:,}"
+
+
+def _split_label_and_amounts(line: str) -> Tuple[str, List[Optional[str]]]:
+    """재무제표 한 줄에서 계정명과 금액(당기/전기)을 분리합니다.
+
+    `-` 단독은 해당 연도 값 없음을 의미합니다.
+    예: ``유형자산의 취득 (8,333,032) -`` → 당기만
+         ``건설중인자산의 증가 - (1,728,350,471)`` → 전기만
+    """
+
+    text = re.sub(r"\s+", " ", str(line or "")).strip()
+    if not text:
+        return "", []
+
+    # 줄 끝의 당기/전기 토큰: 금액 또는 '-'
+    token_re = re.compile(
+        r"(\([0-9,]+\)|[0-9]{1,3}(?:,[0-9]{3})+(?:\.\d+)?|[0-9]{5,}|(?<![0-9])-(?![0-9]))"
+    )
+    tokens = list(token_re.finditer(text))
+    if not tokens:
+        return text, []
+
+    trailing: List[re.Match[str]] = []
+    cursor = len(text)
+    for match in reversed(tokens):
+        gap = text[match.end() : cursor]
+        if gap.strip() and not re.fullmatch(r"[\s\|]*", gap):
+            break
+        trailing.append(match)
+        cursor = match.start()
+    trailing.reverse()
+    if not trailing:
+        return text, []
+
+    # 계정명 뒤에 붙는 최근 1~2개 토큰만 사용
+    trailing = trailing[-2:]
+    label = text[: trailing[0].start()].strip(" :-|·ㆍ.")
+    values: List[Optional[str]] = []
+    for match in trailing:
+        token = match.group(1)
+        values.append(None if token == "-" else token)
+    return label, values
+
+
+def _strip_account_prefix(label: str) -> str:
+    text = re.sub(r"^[Ⅰ-ⅩIVXivx\d\.\-\(\)\s]+", "", str(label or ""))
+    text = re.sub(r"\(주석[^)]*\)", "", text)
+    return text.strip()
+
+
+def _match_primary_account(label: str) -> Optional[str]:
+    normalized = _normalize_account_name(_strip_account_prefix(label))
+    if not normalized:
+        return None
+    if normalized in _ALIAS_LOOKUP:
+        return _ALIAS_LOOKUP[normalized]
+    candidates: List[Tuple[int, str]] = []
+    for alias_norm, primary in _ALIAS_LOOKUP.items():
+        if not alias_norm or alias_norm not in normalized:
+            continue
+        remainder = normalized.replace(alias_norm, "", 1)
+        # '법인세비용차감전순이익'이 '법인세비용'으로 잡히지 않게 합니다.
+        if any(token in remainder for token in ("차감전", "전이익", "비용차감")):
+            continue
+        if len(alias_norm) >= 4:
+            candidates.append((len(alias_norm), primary))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _is_debt_component(label: str) -> bool:
+    normalized = _normalize_account_name(label)
+    if normalized in _DEBT_COMPONENT_NORMS:
+        return True
+    return any(token in normalized for token in _DEBT_COMPONENT_NORMS)
+
+
+def _detect_statement_years(text: str) -> Tuple[Optional[str], Optional[str]]:
+    """본문에서 당기/전기 연도를 추정합니다. (당기, 전기)"""
+
+    years = re.findall(r"(20\d{2})\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일", text)
+    uniq: List[str] = []
+    for year in years:
+        if year not in uniq:
+            uniq.append(year)
+    if len(uniq) >= 2:
+        # 보통 당기 연도가 먼저 나옵니다.
+        return uniq[0], uniq[1]
+    if len(uniq) == 1:
+        current = int(uniq[0])
+        return uniq[0], str(current - 1)
+    return None, None
+
+
 def extract_financials_from_text(text: str) -> Dict[str, Any]:
-    """감사보고서 XML/PDF 텍스트에서 FINANCIAL_KEYS 값을 추출합니다."""
+    """감사보고서 텍스트에서 FINANCIAL_KEYS(당기) 값을 추출합니다."""
+
+    statements = extract_financial_statements_from_text(text)
+    if not statements:
+        return empty_financial_summary()
+    # 최신연도(목록 마지막)를 대표 summary로 사용합니다.
+    latest = dict(statements[-1])
+    latest.pop("year", None)
+    return merge_financial_summaries(latest)
+
+
+def extract_financial_statements_from_text(text: str) -> List[Dict[str, Any]]:
+    """텍스트에서 당기/전기 재무 행을 연도별 리스트로 추출합니다."""
+
+    if not text:
+        return []
+
+    current_year, prior_year = _detect_statement_years(text)
+    current: Dict[str, Any] = empty_financial_summary()
+    prior: Dict[str, Any] = empty_financial_summary()
+    current_debt_specific: List[int] = []
+    prior_debt_specific: List[int] = []
+    current_debt_generic: Optional[int] = None
+    prior_debt_generic: Optional[int] = None
+
+    for raw_line in text.splitlines():
+        label, amounts = _split_label_and_amounts(raw_line)
+        if not label or not amounts:
+            continue
+        primary = _match_primary_account(label)
+        if len(amounts) == 1:
+            current_amount = _parse_amount_to_int(amounts[0])
+            prior_amount = None
+        else:
+            current_amount = _parse_amount_to_int(amounts[0])
+            prior_amount = _parse_amount_to_int(amounts[1])
+        norm = _normalize_account_name(_strip_account_prefix(label))
+
+        # 현금흐름표의 차입금 증가/상환·주석 세부표는 이자부부채 합산에서 제외합니다.
+        if any(token in norm for token in ("증가", "감소", "상환", "유입", "유출")):
+            debt_line = False
+        else:
+            debt_line = norm in {
+                "단기차입금",
+                "장기차입금",
+                "유동성장기차입금",
+                "유동성장기부채",
+                "사채",
+                "전환사채",
+                "차입금",
+                "이자부부채",
+                "이자부채",
+            }
+
+        if (
+            debt_line
+            and current_amount is not None
+            and norm in {
+                "단기차입금",
+                "장기차입금",
+                "유동성장기차입금",
+                "유동성장기부채",
+                "사채",
+                "전환사채",
+            }
+        ):
+            current_debt_specific.append(current_amount)
+            if prior_amount is not None:
+                prior_debt_specific.append(prior_amount)
+        elif debt_line and current_amount is not None and norm in {"차입금", "이자부부채", "이자부채"}:
+            if current_debt_generic is None:
+                current_debt_generic = current_amount
+            if prior_amount is not None and prior_debt_generic is None:
+                prior_debt_generic = prior_amount
+
+        if not primary or primary == "이자부부채":
+            continue
+        if current.get(primary) in {None, "", "-"} and current_amount is not None:
+            current[primary] = _format_amount(current_amount)
+        if prior.get(primary) in {None, "", "-"} and prior_amount is not None:
+            prior[primary] = _format_amount(prior_amount)
+
+    if current_debt_specific:
+        current["이자부부채"] = _format_amount(sum(current_debt_specific))
+    elif current_debt_generic is not None:
+        current["이자부부채"] = _format_amount(current_debt_generic)
+    if prior_debt_specific:
+        prior["이자부부채"] = _format_amount(sum(prior_debt_specific))
+    elif prior_debt_generic is not None:
+        prior["이자부부채"] = _format_amount(prior_debt_generic)
+
+    statements: List[Dict[str, Any]] = []
+    if has_any_financial_value(prior):
+        prior_row = dict(prior)
+        prior_row["year"] = prior_year
+        statements.append(prior_row)
+    if has_any_financial_value(current):
+        current_row = dict(current)
+        current_row["year"] = current_year
+        statements.append(current_row)
+    return statements
+
+
+def extract_financials_from_text_legacy_regex(text: str) -> Dict[str, Any]:
+    """정규식 보조 추출기. 라인 파서가 놓친 키만 채울 때 사용합니다."""
 
     extracted = empty_financial_summary()
     if not text:
@@ -328,7 +593,6 @@ def extract_financials_from_text(text: str) -> Dict[str, Any]:
     for aliases in FINANCIAL_KEYS.values():
         primary = aliases[0]
         for alias in aliases:
-            # 영문 키(total_assets 등)는 본문 검색에서 제외합니다.
             if re.fullmatch(r"[a-z_]+", alias):
                 continue
             label = _spaced_label_pattern(alias)
@@ -344,6 +608,74 @@ def extract_financials_from_text(text: str) -> Dict[str, Any]:
             if extracted[primary] not in {None, "", "-"}:
                 break
     return extracted
+
+
+def _extract_pdf_text_with_pdfplumber(pdf_path: str) -> Tuple[str, int]:
+    if pdfplumber is None:
+        raise RuntimeError("pdfplumber가 설치되어 있지 않습니다.")
+    pages: List[str] = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            pages.append(page.extract_text() or "")
+    return "\n".join(pages), len(pages)
+
+
+def _extract_pdf_text_with_pypdf(pdf_path: str) -> Tuple[str, int]:
+    if PyPDFLoader is None:
+        raise RuntimeError("PyPDFLoader를 사용할 수 없습니다.")
+    docs = PyPDFLoader(pdf_path).load()
+    text = "\n".join(str(getattr(doc, "page_content", "") or "") for doc in docs)
+    return text, len(docs)
+
+
+def extract_financial_payload_from_pdf_file(pdf_path: str) -> Dict[str, Any]:
+    """로컬 PDF에서 재무 summary + 연도별 financials를 추출합니다."""
+
+    errors: List[str] = []
+    text = ""
+    total_pages = 0
+    loader_used = "none"
+
+    if pdfplumber is not None:
+        try:
+            text, total_pages = _extract_pdf_text_with_pdfplumber(pdf_path)
+            loader_used = "pdfplumber"
+        except Exception as error:
+            errors.append(f"pdfplumber: {error}")
+    if not text:
+        try:
+            text, total_pages = _extract_pdf_text_with_pypdf(pdf_path)
+            loader_used = "pypdf"
+        except Exception as error:
+            errors.append(f"pypdf: {error}")
+
+    statements = extract_financial_statements_from_text(text)
+    summary = empty_financial_summary()
+    if statements:
+        latest = dict(statements[-1])
+        latest.pop("year", None)
+        summary = merge_financial_summaries(latest)
+    # 라인 파서가 놓친 키는 정규식으로 한 번 더 보완합니다.
+    summary = merge_financial_summaries(summary, extract_financials_from_text_legacy_regex(text))
+    if statements:
+        statements[-1] = {
+            **statements[-1],
+            **{
+                key: summary.get(key)
+                for key in empty_financial_summary().keys()
+                if summary.get(key) not in {None, "", "-"}
+            },
+        }
+
+    return {
+        "pdf_path": pdf_path,
+        "total_pages": total_pages,
+        "financial_summary": summary,
+        "financials": statements,
+        "loader": loader_used,
+        "text_preview": text[:1500],
+        "extract_errors": errors,
+    }
 
 
 def _extract_financial_summary_from_list(
@@ -645,7 +977,7 @@ async def search_energy_startups_dart_only(
 
 
 # ===========================================================================
-# [PDF 다운로드 및 PyPDFLoader 처리 함수]
+# [PDF 다운로드 및 pdfplumber 재무제표 추출]
 # ===========================================================================
 def parse_rcp_and_dcm(link_or_url: str, default_dcm: Optional[str] = None) -> tuple[str, str]:
     m_rcp = re.search(r'rcp_?no=([0-9]+)', link_or_url, re.IGNORECASE)
@@ -700,19 +1032,35 @@ def download_dart_pdf(link_or_url: str, dcm_no: Optional[str] = None, output_dir
 
 
 def load_dart_pdf_with_loader(pdf_path: str):
-    loader = PyPDFLoader(pdf_path)
-    return loader.load()
+    """하위 호환용. 가능하면 pdfplumber 텍스트를 Document 형태로 감쌉니다."""
+
+    payload = extract_financial_payload_from_pdf_file(pdf_path)
+    text = payload.get("text_preview") or ""
+    if PyPDFLoader is not None:
+        try:
+            return PyPDFLoader(pdf_path).load()
+        except Exception:
+            pass
+    # 최소 Document-like 객체
+    class _Doc:
+        def __init__(self, content: str):
+            self.page_content = content
+            self.metadata = {"source": pdf_path, "loader": payload.get("loader")}
+
+    return [_Doc(text)]
 
 
 def download_and_extract_pdf_data(link_or_url: str, dcm_no: Optional[str] = None) -> Dict[str, Any]:
     pdf_path = download_dart_pdf(link_or_url, dcm_no)
-    docs = load_dart_pdf_with_loader(pdf_path)
-    text = "\n".join(str(getattr(doc, "page_content", "") or "") for doc in docs)
+    payload = extract_financial_payload_from_pdf_file(pdf_path)
     return {
         "pdf_path": pdf_path,
-        "total_pages": len(docs),
-        "financial_summary": extract_financials_from_text(text),
-        "documents": docs,
+        "total_pages": payload.get("total_pages", 0),
+        "financial_summary": payload.get("financial_summary") or empty_financial_summary(),
+        "financials": payload.get("financials") or [],
+        "loader": payload.get("loader"),
+        "documents": load_dart_pdf_with_loader(pdf_path),
+        "text_preview": payload.get("text_preview", ""),
     }
 
 
@@ -720,21 +1068,21 @@ def extract_financials_from_pdf(
     link_or_url: str,
     dcm_no: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """download_dart_pdf로 공시 PDF를 받아 FINANCIAL_KEYS를 추출합니다."""
+    """download_dart_pdf로 공시 PDF를 받아 FINANCIAL_KEYS와 연도별 financials를 추출합니다."""
 
     payload = download_and_extract_pdf_data(link_or_url, dcm_no)
     return {
         "pdf_path": payload["pdf_path"],
         "total_pages": payload["total_pages"],
         "financial_summary": payload["financial_summary"],
-        "text_preview": "\n".join(
-            str(getattr(doc, "page_content", "") or "") for doc in payload["documents"]
-        )[:1500],
+        "financials": payload.get("financials") or [],
+        "loader": payload.get("loader"),
+        "text_preview": payload.get("text_preview", "")[:1500],
     }
 
 
 def enrich_company_with_pdf(company: Dict[str, Any]) -> Dict[str, Any]:
-    """부족한 FINANCIAL_KEYS를 공시 PDF에서 보완합니다."""
+    """부족한 FINANCIAL_KEYS를 공시 PDF에서 보완하고 2개년 financials를 붙입니다."""
 
     enriched = dict(company)
     link = (
@@ -756,6 +1104,22 @@ def enrich_company_with_pdf(company: Dict[str, Any]) -> Dict[str, Any]:
     enriched["financial_summary_normalized"] = financial_summary_normalized(merged)
     enriched["pdf_path"] = pdf_payload.get("pdf_path")
     enriched["pdf_page_count"] = pdf_payload.get("total_pages")
+    enriched["pdf_loader"] = pdf_payload.get("loader")
+
+    pdf_financials = [
+        row for row in (pdf_payload.get("financials") or []) if isinstance(row, dict)
+    ]
+    existing_financials = [
+        row for row in (enriched.get("financials") or []) if isinstance(row, dict)
+    ]
+    if pdf_financials:
+        # PDF 2개년 결과가 있으면 우선 사용합니다.
+        enriched["financials"] = pdf_financials
+    elif not existing_financials and has_any_financial_value(merged):
+        row = dict(merged)
+        row["year"] = str(enriched.get("rcept_dt") or "")[:4] or None
+        enriched["financials"] = [row]
+
     # PDF로 자산이 채워지면 자산추정 단계도 다시 계산합니다.
     assets_int = _parse_amount_to_int(merged.get("자산총계"))
     if assets_int is not None and enriched.get("stage_source") == "asset_estimate":
@@ -765,6 +1129,10 @@ def enrich_company_with_pdf(company: Dict[str, Any]) -> Dict[str, Any]:
     if missing_financial_keys(before) and has_any_financial_value(pdf_payload.get("financial_summary")):
         previous_source = enriched.get("financial_source") or "없음"
         enriched["financial_source"] = f"{previous_source}+공시PDF"
+    elif has_any_financial_value(pdf_payload.get("financial_summary")):
+        previous_source = enriched.get("financial_source") or "없음"
+        if "공시PDF" not in str(previous_source):
+            enriched["financial_source"] = f"{previous_source}+공시PDF"
     return enriched
 
 
