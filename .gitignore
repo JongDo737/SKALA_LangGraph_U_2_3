@@ -28,6 +28,8 @@ venv/
 chroma_db/
 vectorstore/
 cache/
+*cache*.json
+data/*cache*.json
 
 # Generated reports
 outputs/*
