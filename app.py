@@ -14,11 +14,15 @@ from typing import Any
 from langchain_teddynote.graphs import visualize_graph
 from langgraph.graph import END, START, StateGraph
 
-from agents.dart import dart_lookup_node
-from agents.rag import market_research_node
+from agents.dart import dart_lookup_node, print_companies_for_rag
 from agents.startup_screen import screen_startups_node
 from config import DEFAULT_COMPANY_COUNT, DEFAULT_MAX_SEARCH_ATTEMPTS
 from state import GraphState
+
+try:
+    from agents.rag import market_research_node as _rag_market_research_node
+except ImportError:  # RAG 담당 구현 전이어도 그래프는 동작하게 둡니다.
+    _rag_market_research_node = None
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 COMPANY_DATA_PATH = PROJECT_ROOT / "data" / "companies.json"
@@ -132,6 +136,35 @@ def tips_enrichment_node(state: GraphState) -> dict[str, Any]:
     )
     return {
         "candidate_pool": candidates,
+        "execution_log": _append_log(state, message),
+    }
+
+
+def market_research_node(state: GraphState) -> dict[str, Any]:
+    """스크리닝을 통과한 DART JSON을 RAG로 넘기기 직전 데이터를 출력합니다."""
+
+    companies = list(state.get("eligible_companies", []))
+    print_companies_for_rag(
+        companies,
+        title="market_research 입력 = DART(+스크리닝) → RAG 전달 데이터",
+    )
+
+    if callable(_rag_market_research_node):
+        return _rag_market_research_node(state)
+
+    # RAG 담당 파일이 stub인 동안에도 그래프가 이어지도록 전달만 수행합니다.
+    attempt = int(state.get("market_attempts", 0)) + 1
+    names = _company_names(companies)
+    message = f"{attempt}차 시장성 평가: RAG 전달 기업 {len(companies)}개"
+    _print_node_result(
+        "market_research (app.py bridge)",
+        received=f"DART 기업={names}",
+        returned=f"RAG로 {len(companies)}개 전달 (rag.py 미구현 → pass-through)",
+    )
+    return {
+        "eligible_companies": companies,
+        "market_attempts": attempt,
+        "next_stage": "compare_competition",
         "execution_log": _append_log(state, message),
     }
 
