@@ -192,66 +192,241 @@ class AsyncDartService:
             try:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status != 200:
-                        return {}
+                        return empty_financial_summary()
                     content = await resp.read()
 
                 with zipfile.ZipFile(io.BytesIO(content)) as z:
                     xml_files = [f for f in z.namelist() if f.endswith(".xml")]
                     if not xml_files:
-                        return {}
+                        return empty_financial_summary()
                     raw_xml = z.read(xml_files[0]).decode("utf-8", errors="ignore")
 
                 clean_text = re.sub(r"<[^>]+>", " ", raw_xml)
                 clean_text = re.sub(r"&nbsp;", " ", clean_text)
                 clean_text = re.sub(r"\s+", " ", clean_text)
-
-                patterns = {
-                    "자산총계": r"(?:자\s*산\s*총\s*계)\s*([0-9,]+|\([0-9,]+\))",
-                    "부채총계": r"(?:부\s*채\s*총\s*계)\s*([0-9,]+|\([0-9,]+\))",
-                    "자본총계": r"(?:자\s*본\s*총\s*계)\s*([0-9,]+|\([0-9,]+\))",
-                    "매출액": r"(?:[Ⅰ-Ⅹ\d\.\s]*(?:매\s*출\s*액|수익\(매출액\)|영\s*업\s*수\s*익))(?:\s*\(주석[^\)]*\))?\s*([0-9,]+|\([0-9,]+\))",
-                    "영업이익": r"(?:[Ⅰ-Ⅹ\d\.\s]*(?:영\s*업\s*이\s*익(?:\(손실\))?))(?:\s*\(주석[^\)]*\))?\s*([0-9,]+|\([0-9,]+\))",
-                    "당기순이익": r"(?:[Ⅰ-Ⅹ\d\.\s]*(?:당\s*기\s*순\s*이\s*익(?:\(손실\))?))(?:\s*\(주석[^\)]*\))?\s*([0-9,]+|\([0-9,]+\))",
-                }
-
-                extracted = {}
-                for key, pattern in patterns.items():
-                    m = re.search(pattern, clean_text)
-                    extracted[key] = m.group(1).strip() if m else None
-
-                return extracted
+                return extract_financials_from_text(clean_text)
             except Exception:
-                return {}
+                return empty_financial_summary()
 
 
-def _extract_financial_summary_from_list(financial_items: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
-    """정기 재무제표 계정 리스트에서 핵심 지표 추출"""
+# DART-style Korean keys are primary; normalized English keys are also allowed.
+FINANCIAL_KEYS = {
+    "assets": ("자산총계", "total_assets"),
+    "liabilities": ("부채총계", "total_liabilities"),
+    "equity": ("자본총계", "total_equity"),
+    "revenue": ("매출액", "revenue", "수익(매출액)", "영업수익"),
+    "operating_profit": ("영업이익", "operating_income", "영업이익(손실)"),
+    "net_income": ("당기순이익", "net_income", "당기순이익(손실)"),
+    "tax_expense": ("법인세비용", "income_tax_expense", "법인세등"),
+    "cash": ("현금및현금성자산", "cash_and_cash_equivalents", "현금및현금성자산등"),
+    "debt": ("이자부부채", "이자부채", "interest_bearing_debt", "차입금"),
+    "interest_expense": ("이자비용", "interest_expense"),
+    "operating_cf": ("영업활동현금흐름", "operating_cash_flow", "영업활동으로인한현금흐름"),
+    "capex": ("CAPEX", "설비투자", "유형자산의취득", "유형자산의 취득", "capital_expenditure"),
+    "current_assets": ("유동자산", "current_assets"),
+    "current_liabilities": ("유동부채", "current_liabilities"),
+}
+
+# 계정명 매칭용: 한글 1차 키 → 허용 별칭(공백·영문 포함)
+_ACCOUNT_ALIASES: Dict[str, tuple[str, ...]] = {
+    aliases[0]: aliases for aliases in FINANCIAL_KEYS.values()
+}
+
+
+def empty_financial_summary() -> Dict[str, Any]:
+    """한글 1차 키 기준으로 빈 재무 요약 객체를 만듭니다."""
+
+    return {aliases[0]: None for aliases in FINANCIAL_KEYS.values()}
+
+
+def financial_summary_normalized(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """한글 financial_summary를 영문 키로도 읽을 수 있게 변환합니다."""
+
+    return {
+        eng_key: summary.get(aliases[0])
+        for eng_key, aliases in FINANCIAL_KEYS.items()
+    }
+
+
+def _normalize_account_name(name: str) -> str:
+    return re.sub(r"[\s\*※·ㆍ\.]", "", str(name or "")).lower()
+
+
+def _parse_amount_to_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "null", "-"}:
+        return None
+    negative = text.startswith("(") and text.endswith(")")
+    clean = text.replace(",", "").replace("(", "").replace(")", "").replace("원", "").strip()
+    clean = re.sub(r"[^\d\-]", "", clean)
+    if not clean or clean == "-":
+        return None
+    try:
+        amount = int(clean)
+        return -amount if negative and amount > 0 else amount
+    except ValueError:
+        return None
+
+
+def has_any_financial_value(summary: Optional[Dict[str, Any]]) -> bool:
+    if not summary:
+        return False
+    return any(value not in {None, "", "-"} for value in summary.values())
+
+
+def missing_financial_keys(summary: Optional[Dict[str, Any]]) -> list[str]:
+    summary = summary or {}
+    return [
+        aliases[0]
+        for aliases in FINANCIAL_KEYS.values()
+        if summary.get(aliases[0]) in {None, "", "-"}
+    ]
+
+
+def merge_financial_summaries(*summaries: Dict[str, Any]) -> Dict[str, Any]:
+    """앞선 값이 비어 있을 때만 뒤 요약으로 채웁니다."""
+
+    merged = empty_financial_summary()
+    for summary in summaries:
+        if not summary:
+            continue
+        for eng_key, aliases in FINANCIAL_KEYS.items():
+            primary = aliases[0]
+            if merged.get(primary) not in {None, "", "-"}:
+                continue
+            # 한글 키 또는 영문 키/별칭으로 들어온 값도 수용합니다.
+            value = summary.get(primary)
+            if value in {None, "", "-"}:
+                for alias in aliases:
+                    if summary.get(alias) not in {None, "", "-"}:
+                        value = summary.get(alias)
+                        break
+            if value not in {None, "", "-"}:
+                merged[primary] = value
+    return merged
+
+
+def _spaced_label_pattern(label: str) -> str:
+    """'자산총계' → '자\\s*산\\s*총\\s*계' 형태로 변환합니다."""
+
+    chars = [re.escape(ch) for ch in label if not ch.isspace()]
+    return r"\s*".join(chars)
+
+
+def extract_financials_from_text(text: str) -> Dict[str, Any]:
+    """감사보고서 XML/PDF 텍스트에서 FINANCIAL_KEYS 값을 추출합니다."""
+
+    extracted = empty_financial_summary()
+    if not text:
+        return extracted
+
+    clean_text = re.sub(r"\s+", " ", text)
+    amount = r"([0-9,]{2,}|\([0-9,]{2,}\))"
+
+    for aliases in FINANCIAL_KEYS.values():
+        primary = aliases[0]
+        for alias in aliases:
+            # 영문 키(total_assets 등)는 본문 검색에서 제외합니다.
+            if re.fullmatch(r"[a-z_]+", alias):
+                continue
+            label = _spaced_label_pattern(alias)
+            patterns = [
+                rf"(?:[Ⅰ-ⅩIVXivx\d\.\-\(\)\s]*)(?:{label})(?:\s*\(주석[^\)]*\))?\s*{amount}",
+                rf"(?:{label})\s*{amount}",
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, clean_text, re.IGNORECASE)
+                if match:
+                    extracted[primary] = match.group(1).strip()
+                    break
+            if extracted[primary] not in {None, "", "-"}:
+                break
+    return extracted
+
+
+def _extract_financial_summary_from_list(
+    financial_items: Optional[List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """정기 재무제표 계정 리스트에서 FINANCIAL_KEYS 지표를 추출합니다."""
+
+    summary = empty_financial_summary()
     if not financial_items or not isinstance(financial_items, list):
-        return {}
+        return summary
 
-    summary = {
-        "자산총계": None,
-        "부채총계": None,
-        "자본총계": None,
-        "매출액": None,
-        "영업이익": None,
-        "당기순이익": None,
-    }
-    target_names = {
-        "자산총계": ["자산총계"],
-        "부채총계": ["부채총계"],
-        "자본총계": ["자본총계"],
-        "매출액": ["매출액", "수익(매출액)", "영업수익"],
-        "영업이익": ["영업이익", "영업이익(손실)"],
-        "당기순이익": ["당기순이익", "당기순이익(손실)"],
-    }
+    alias_lookup: Dict[str, str] = {}
+    for primary, aliases in _ACCOUNT_ALIASES.items():
+        for alias in aliases:
+            alias_lookup[_normalize_account_name(alias)] = primary
+        # 괄호 손실 표기까지 허용합니다.
+        alias_lookup[_normalize_account_name(f"{primary}(손실)")] = primary
+
     for item in financial_items:
-        account_name = item.get("account_nm", "").strip()
-        current_amount = item.get("thstrm_amount")
-        for key, aliases in target_names.items():
-            if summary[key] is None and account_name in aliases:
-                summary[key] = current_amount
+        account_name = str(item.get("account_nm") or "").strip()
+        normalized = _normalize_account_name(account_name)
+        primary = alias_lookup.get(normalized)
+        if not primary:
+            # 부분 일치: '유형자산의취득' ⊂ '현금흐름표-유형자산의취득'
+            for alias_norm, mapped in alias_lookup.items():
+                if alias_norm and alias_norm in normalized:
+                    primary = mapped
+                    break
+        if not primary or summary.get(primary) not in {None, "", "-"}:
+            continue
+        amount = item.get("thstrm_amount")
+        if amount not in {None, "", "-"}:
+            summary[primary] = amount
     return summary
+
+
+def build_overview_payload(overview: Dict[str, Any]) -> Dict[str, Any]:
+    """DART company.json에서 RAG/스크리닝에 쓸 만한 필드를 정리합니다."""
+
+    corp_cls = overview.get("corp_cls")
+    legal_class = {
+        "Y": "유가증권시장",
+        "K": "코스닥",
+        "N": "코넥스 상장벤처",
+        "E": "비상장 외감기업",
+    }.get(corp_cls, corp_cls)
+
+    return {
+        "company_name": overview.get("corp_name"),
+        "company_name_eng": overview.get("corp_name_eng"),
+        "corp_code": overview.get("corp_code"),
+        "stock_code": overview.get("stock_code") or None,
+        "stock_name": overview.get("stock_name") or None,
+        "ceo": overview.get("ceo_nm"),
+        "corp_cls": corp_cls,
+        "legal_class": legal_class,
+        "jurir_no": overview.get("jurir_no"),
+        "bizr_no": overview.get("bizr_no"),
+        "address": overview.get("adres"),
+        "homepage_url": overview.get("hm_url") or None,
+        "ir_url": overview.get("ir_url") or None,
+        "phone": overview.get("phn_no") or None,
+        "fax": overview.get("fax_no") or None,
+        "industry_code": overview.get("induty_code"),
+        "established_date": overview.get("est_dt"),
+        "acc_month": overview.get("acc_mt"),
+    }
+
+
+def build_latest_report_payload(audit_items: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    if not audit_items:
+        return {}
+    latest = audit_items[0]
+    rcept_no = latest.get("rcept_no")
+    return {
+        "rcept_no": rcept_no,
+        "report_nm": latest.get("report_nm"),
+        "rcept_dt": latest.get("rcept_dt"),
+        "rm": latest.get("rm"),
+        "dart_viewer_link": (
+            f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}" if rcept_no else None
+        ),
+    }
 
 
 def estimate_investment_stage(assets_amount: Optional[int]) -> str:
@@ -376,7 +551,7 @@ async def search_energy_startups_dart_only(
                 fin_items = financials.get("list") if financials.get("status") == "000" else None
                 audit_items = audits.get("list") if audits.get("status") == "000" else []
                 fin_summary = _extract_financial_summary_from_list(fin_items)
-                source_type = "정기보고서(사업보고서)" if any(fin_summary.values()) else "없음"
+                source_type = "정기보고서(사업보고서)" if has_any_financial_value(fin_summary) else "없음"
                 parsed_rows.append(
                     {
                         "company_name": company_name,
@@ -387,7 +562,8 @@ async def search_energy_startups_dart_only(
                         "source_type": source_type,
                     }
                 )
-                if not any(fin_summary.values()) and audit_items:
+                # API 요약에 핵심 키가 비어 있으면 감사보고서 원문으로 보완합니다.
+                if missing_financial_keys(fin_summary) and audit_items:
                     latest_rcept_no = audit_items[0].get("rcept_no")
                     if latest_rcept_no:
                         audit_doc_indexes.append(index)
@@ -401,12 +577,18 @@ async def search_energy_startups_dart_only(
                     return_exceptions=True,
                 )
                 for row_index, doc_financials in zip(audit_doc_indexes, doc_financials_list):
-                    if isinstance(doc_financials, Exception):
+                    if isinstance(doc_financials, Exception) or not doc_financials:
                         continue
-                    if doc_financials:
-                        parsed_rows[row_index]["fin_summary"] = doc_financials
+                    before = parsed_rows[row_index]["fin_summary"]
+                    merged = merge_financial_summaries(before, doc_financials)
+                    parsed_rows[row_index]["fin_summary"] = merged
+                    if has_any_financial_value(doc_financials):
                         report_nm = parsed_rows[row_index]["audit_items"][0].get("report_nm")
-                        parsed_rows[row_index]["source_type"] = f"감사보고서 원문({report_nm})"
+                        previous = parsed_rows[row_index]["source_type"]
+                        if previous == "없음":
+                            parsed_rows[row_index]["source_type"] = f"감사보고서 원문({report_nm})"
+                        else:
+                            parsed_rows[row_index]["source_type"] = f"{previous}+감사원문"
 
             for row in parsed_rows:
                 overview = row["overview"]
@@ -414,46 +596,50 @@ async def search_energy_startups_dart_only(
                 audit_items = row["audit_items"]
                 company_name = row["company_name"]
                 corp_code = row["corp_code"]
-                est_dt = overview.get("est_dt", "19000101")
-                corp_cls = overview.get("corp_cls")
 
-                assets_int = None
-                assets_str = fin_summary.get("자산총계")
-                if assets_str:
-                    try:
-                        clean_num = assets_str.replace(",", "").replace("(", "").replace(")", "").strip()
-                        assets_int = int(clean_num)
-                        if assets_int > max_assets_krw:
-                            continue
-                    except Exception:
-                        pass
+                assets_int = _parse_amount_to_int(fin_summary.get("자산총계"))
+                if assets_int is not None and assets_int > max_assets_krw:
+                    continue
 
-                if any(fin_summary.values()) or audit_items:
-                    stage_label = estimate_investment_stage(assets_int)
-                    company_data = {
-                        "company_name": company_name,
-                        "corp_code": corp_code,
-                        "ceo": overview.get("ceo_nm"),
-                        "established_date": est_dt,
-                        "address": overview.get("adres"),
-                        "industry_code": overview.get("induty_code"),
-                        "legal_class": "비상장 외감기업" if corp_cls == "E" else "코넥스 상장벤처",
-                        "asset_estimated_stage": stage_label,
-                        "estimated_investment_stage": stage_label,
-                        "stage_source": "asset_estimate",
-                        "financial_summary": fin_summary,
-                        "financial_source": row["source_type"],
-                        "audit_reports_count": len(audit_items),
-                        "dart_viewer_link": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={audit_items[0].get('rcept_no')}" if audit_items else None,
+                if has_any_financial_value(fin_summary) or audit_items:
+                    # overview에 corp_code가 없을 수 있어 탐색 시점 값을 보강합니다.
+                    overview_with_code = {
+                        **overview,
+                        "corp_code": overview.get("corp_code") or corp_code,
+                        "corp_name": overview.get("corp_name") or company_name,
                     }
+                    company_data = build_company_dart_payload(
+                        overview=overview_with_code,
+                        fin_summary=fin_summary,
+                        financial_source=row["source_type"],
+                        audit_items=audit_items,
+                        assets_int=assets_int,
+                    )
                     recommended_startups.append(company_data)
-                    print(f"    ✔ 에너지 스타트업 발굴 성공: {company_name} (단계: {stage_label}, 자산: {fin_summary.get('자산총계', '확인중')})")
+                    print(
+                        f"    ✔ 에너지 스타트업 발굴 성공: {company_name} "
+                        f"(단계: {company_data['asset_estimated_stage']}, "
+                        f"자산: {fin_summary.get('자산총계', '확인중')})"
+                    )
 
                 if len(recommended_startups) >= limit:
                     break
 
             if len(recommended_startups) >= limit:
                 break
+
+    # 최종 후보에 대해 공시 PDF로 FINANCIAL_KEYS를 최대한 채웁니다.
+    if recommended_startups:
+        print(f"  📄 공시 PDF로 FINANCIAL_KEYS 보완 중... ({len(recommended_startups)}개)")
+        recommended_startups = await enrich_companies_with_pdf(recommended_startups)
+        for company in recommended_startups:
+            filled = len(FINANCIAL_KEYS) - len(missing_financial_keys(company.get("financial_summary")))
+            print(
+                f"    · {company.get('company_name')}: "
+                f"재무키 {filled}/{len(FINANCIAL_KEYS)}개, "
+                f"출처={company.get('financial_source')}, "
+                f"pdf={company.get('pdf_path') or company.get('pdf_error') or '없음'}"
+            )
 
     return recommended_startups
 
@@ -501,7 +687,7 @@ def download_dart_pdf(link_or_url: str, dcm_no: Optional[str] = None, output_dir
     }
 
     req = urllib.request.Request(pdf_download_url, headers=headers)
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:
         content = resp.read()
 
     if len(content) == 0:
@@ -521,10 +707,115 @@ def load_dart_pdf_with_loader(pdf_path: str):
 def download_and_extract_pdf_data(link_or_url: str, dcm_no: Optional[str] = None) -> Dict[str, Any]:
     pdf_path = download_dart_pdf(link_or_url, dcm_no)
     docs = load_dart_pdf_with_loader(pdf_path)
+    text = "\n".join(str(getattr(doc, "page_content", "") or "") for doc in docs)
     return {
         "pdf_path": pdf_path,
         "total_pages": len(docs),
+        "financial_summary": extract_financials_from_text(text),
         "documents": docs,
+    }
+
+
+def extract_financials_from_pdf(
+    link_or_url: str,
+    dcm_no: Optional[str] = None,
+) -> Dict[str, Any]:
+    """download_dart_pdf로 공시 PDF를 받아 FINANCIAL_KEYS를 추출합니다."""
+
+    payload = download_and_extract_pdf_data(link_or_url, dcm_no)
+    return {
+        "pdf_path": payload["pdf_path"],
+        "total_pages": payload["total_pages"],
+        "financial_summary": payload["financial_summary"],
+        "text_preview": "\n".join(
+            str(getattr(doc, "page_content", "") or "") for doc in payload["documents"]
+        )[:1500],
+    }
+
+
+def enrich_company_with_pdf(company: Dict[str, Any]) -> Dict[str, Any]:
+    """부족한 FINANCIAL_KEYS를 공시 PDF에서 보완합니다."""
+
+    enriched = dict(company)
+    link = (
+        enriched.get("dart_viewer_link")
+        or (enriched.get("latest_report") or {}).get("dart_viewer_link")
+    )
+    if not link:
+        return enriched
+
+    try:
+        pdf_payload = extract_financials_from_pdf(link)
+    except Exception as error:
+        enriched["pdf_error"] = str(error)
+        return enriched
+
+    before = enriched.get("financial_summary") or empty_financial_summary()
+    merged = merge_financial_summaries(before, pdf_payload.get("financial_summary") or {})
+    enriched["financial_summary"] = merged
+    enriched["financial_summary_normalized"] = financial_summary_normalized(merged)
+    enriched["pdf_path"] = pdf_payload.get("pdf_path")
+    enriched["pdf_page_count"] = pdf_payload.get("total_pages")
+    # PDF로 자산이 채워지면 자산추정 단계도 다시 계산합니다.
+    assets_int = _parse_amount_to_int(merged.get("자산총계"))
+    if assets_int is not None and enriched.get("stage_source") == "asset_estimate":
+        stage_label = estimate_investment_stage(assets_int)
+        enriched["asset_estimated_stage"] = stage_label
+        enriched["estimated_investment_stage"] = stage_label
+    if missing_financial_keys(before) and has_any_financial_value(pdf_payload.get("financial_summary")):
+        previous_source = enriched.get("financial_source") or "없음"
+        enriched["financial_source"] = f"{previous_source}+공시PDF"
+    return enriched
+
+
+async def enrich_companies_with_pdf(
+    companies: List[Dict[str, Any]],
+    *,
+    concurrency: int = 4,
+) -> List[Dict[str, Any]]:
+    """발굴된 기업들에 대해 공시 PDF 재무 추출을 병렬로 수행합니다."""
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _one(company: Dict[str, Any]) -> Dict[str, Any]:
+        # 핵심 키가 이미 채워져 있어도 PDF에서 CAPEX·현금흐름 등을 보완합니다.
+        async with semaphore:
+            return await asyncio.to_thread(enrich_company_with_pdf, company)
+
+    if not companies:
+        return []
+    return list(await asyncio.gather(*[_one(company) for company in companies]))
+
+
+def build_company_dart_payload(
+    *,
+    overview: Dict[str, Any],
+    fin_summary: Dict[str, Any],
+    financial_source: str,
+    audit_items: Optional[List[Dict[str, Any]]] = None,
+    assets_int: Optional[int] = None,
+) -> Dict[str, Any]:
+    """탐색/단건조회가 공유하는 DART 기업 JSON을 만듭니다."""
+
+    overview_payload = build_overview_payload(overview)
+    latest_report = build_latest_report_payload(audit_items)
+    stage_label = estimate_investment_stage(assets_int)
+    summary = merge_financial_summaries(fin_summary)
+
+    return {
+        **overview_payload,
+        "asset_estimated_stage": stage_label,
+        "estimated_investment_stage": stage_label,
+        "stage_source": "asset_estimate",
+        "financial_summary": summary,
+        "financial_summary_normalized": financial_summary_normalized(summary),
+        "financial_source": financial_source,
+        "audit_reports_count": len(audit_items or []),
+        "latest_report": latest_report,
+        "dart_viewer_link": latest_report.get("dart_viewer_link"),
+        "rcept_no": latest_report.get("rcept_no"),
+        "report_nm": latest_report.get("report_nm"),
+        "rcept_dt": latest_report.get("rcept_dt"),
     }
 
 
@@ -576,28 +867,90 @@ async def get_company_dart_data(
         audit_items = audits.get("list") if audits.get("status") == "000" else []
 
         fin_summary = _extract_financial_summary_from_list(fin_items)
-        source_type = "정기보고서(사업보고서)" if any(fin_summary.values()) else "없음"
+        source_type = "정기보고서(사업보고서)" if has_any_financial_value(fin_summary) else "없음"
 
-        if not any(fin_summary.values()) and audit_items:
+        if missing_financial_keys(fin_summary) and audit_items:
             latest_rcept_no = audit_items[0].get("rcept_no")
             if latest_rcept_no:
                 doc_financials = await service.extract_financials_from_audit_doc(session, latest_rcept_no)
-                if doc_financials:
-                    fin_summary = doc_financials
-                    source_type = f"감사보고서 원문({audit_items[0].get('report_nm')})"
+                if has_any_financial_value(doc_financials):
+                    fin_summary = merge_financial_summaries(fin_summary, doc_financials)
+                    if source_type == "없음":
+                        source_type = f"감사보고서 원문({audit_items[0].get('report_nm')})"
+                    else:
+                        source_type = f"{source_type}+감사원문"
+
+        overview_ok = overview if overview.get("status") == "000" else {}
+        company_payload = build_company_dart_payload(
+            overview={**overview_ok, "corp_code": corp_code, "corp_name": overview_ok.get("corp_name") or clean_name},
+            fin_summary=fin_summary,
+            financial_source=source_type,
+            audit_items=audit_items,
+            assets_int=_parse_amount_to_int(fin_summary.get("자산총계")),
+        )
+        if company_payload.get("dart_viewer_link"):
+            company_payload = await asyncio.to_thread(enrich_company_with_pdf, company_payload)
 
         return {
             "query_name": clean_name,
             "matched": True,
             "corp_code": corp_code,
             "startup_info": extra_startup_info or None,
-            "overview": overview if overview.get("status") == "000" else {},
-            "financial_summary": fin_summary,
-            "financial_source": source_type,
+            "overview": overview_ok,
+            **company_payload,
             "financial_statements_raw": fin_items or [],
             "audit_reports": audit_items,
-            "latest_report_link": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={audit_items[0].get('rcept_no')}" if audit_items else None,
+            "latest_report_link": company_payload.get("dart_viewer_link"),
         }
+
+
+def print_companies_for_rag(
+    companies: List[Dict[str, Any]],
+    *,
+    title: str = "DART → RAG 전달 데이터",
+) -> None:
+    """RAG로 넘길 기업 JSON을 터미널에 그대로 출력합니다."""
+
+    print(f"\n{'=' * 70}")
+    print(f"[RAG 전달] {title} ({len(companies)}개)")
+    print("=" * 70)
+    for index, company in enumerate(companies, 1):
+        payload = build_rag_handoff_payload(company)
+        print(f"\n--- [{index}] {payload.get('company_name') or payload.get('name')} ---")
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    print(f"\n{'=' * 70}\n")
+
+
+def build_rag_handoff_payload(company: Dict[str, Any]) -> Dict[str, Any]:
+    """RAG 입력으로 쓸 필드만 골라 직렬화하기 쉬운 dict로 만듭니다."""
+
+    dart = company.get("dart") if isinstance(company.get("dart"), dict) else {}
+    source = {**dart, **company}
+    return {
+        "company_name": source.get("company_name") or source.get("name"),
+        "corp_code": source.get("corp_code") or source.get("id"),
+        "ceo": source.get("ceo"),
+        "established_date": source.get("established_date") or source.get("established_at"),
+        "legal_class": source.get("legal_class"),
+        "bizr_no": source.get("bizr_no"),
+        "industry_code": source.get("industry_code"),
+        "address": source.get("address"),
+        "homepage_url": source.get("homepage_url"),
+        "estimated_investment_stage": source.get("estimated_investment_stage"),
+        "asset_estimated_stage": source.get("asset_estimated_stage"),
+        "stage_source": source.get("stage_source"),
+        "screening": source.get("screening"),
+        "financial_summary": source.get("financial_summary") or {},
+        "financial_summary_normalized": source.get("financial_summary_normalized") or {},
+        "financial_source": source.get("financial_source"),
+        "dart_viewer_link": source.get("dart_viewer_link"),
+        "rcept_no": source.get("rcept_no"),
+        "report_nm": source.get("report_nm"),
+        "rcept_dt": source.get("rcept_dt"),
+        "pdf_path": source.get("pdf_path"),
+        "audit_reports_count": source.get("audit_reports_count"),
+        "latest_report": source.get("latest_report") or {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +1029,11 @@ async def dart_lookup_node(state: GraphState) -> Dict[str, Any]:
         f"  반환 값    : 신규 기업={passed_names}, "
         f"누적={len(eligible_companies)}개"
     )
+    if newly_selected:
+        print_companies_for_rag(
+            newly_selected,
+            title="lookup_dart 신규 발굴분 (스크리닝 전, RAG 후보 원본)",
+        )
 
     return {
         "eligible_companies": eligible_companies,
@@ -705,10 +1063,15 @@ if __name__ == "__main__":
         print(f"\n🎉 최종 발굴된 에너지 스타트업: 총 {len(results)}개\n")
 
         for idx, comp in enumerate(results, 1):
-            print(f"[{idx}] {comp['company_name']} (대표: {comp['ceo']})")
-            print(f"    • 법인구분: {comp['legal_class']} | 설립일: {comp['established_date']}")
-            print(f"    • 추정 단계: {comp['estimated_investment_stage']}")
-            print(f"    • 재무제표: {comp['financial_summary']}")
-            print(f"    • DART 공시 링크: {comp['dart_viewer_link']}\n")
+            filled = len(FINANCIAL_KEYS) - len(missing_financial_keys(comp.get("financial_summary")))
+            print(f"[{idx}] {comp['company_name']} (대표: {comp.get('ceo')})")
+            print(f"    • 법인구분: {comp.get('legal_class')} | 설립일: {comp.get('established_date')}")
+            print(f"    • 사업자번호: {comp.get('bizr_no')} | 업종코드: {comp.get('industry_code')}")
+            print(f"    • 홈페이지: {comp.get('homepage_url')}")
+            print(f"    • 추정 단계: {comp.get('estimated_investment_stage')}")
+            print(f"    • 재무출처: {comp.get('financial_source')} | 키 {filled}/{len(FINANCIAL_KEYS)}")
+            print(f"    • 재무제표: {comp.get('financial_summary')}")
+            print(f"    • PDF: {comp.get('pdf_path') or comp.get('pdf_error') or '없음'}")
+            print(f"    • DART 공시 링크: {comp.get('dart_viewer_link')}\n")
 
     asyncio.run(run_test())
