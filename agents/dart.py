@@ -13,15 +13,23 @@ import zipfile
 import io
 import re
 import random
+import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 import aiohttp
 from langchain_community.document_loaders import PyPDFLoader
 
-# 경로 설정
+# dart.py를 직접 실행해도 프로젝트 루트의 state.py를 찾을 수 있게 합니다.
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from config import DEFAULT_COMPANY_COUNT, DART_FETCH_MULTIPLIER
+from state import GraphState
+
+# 경로 설정
 COMPANIES_JSON_PATH = os.path.join(PROJECT_ROOT, "data", "companies.json")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data")
 CORP_CODE_CACHE_FILE = os.path.join(CACHE_DIR, "corp_codes_cache.json")
@@ -59,7 +67,7 @@ class AsyncDartService:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or load_dart_api_key()
         self.corp_map: Dict[str, str] = {}  # {회사명: 8자리 corp_code}
-        self.semaphore = asyncio.Semaphore(10)  # DART API 동시 요청 수 제한
+        self.semaphore = asyncio.Semaphore(20)  # DART API 동시 요청 수 제한
 
     async def init_corp_codes(self, session: aiohttp.ClientSession) -> None:
         """DART 전체 기업 고유번호(corp_code) 목록을 비동기로 로드 및 캐싱합니다."""
@@ -247,17 +255,17 @@ def _extract_financial_summary_from_list(financial_items: Optional[List[Dict[str
 
 
 def estimate_investment_stage(assets_amount: Optional[int]) -> str:
-    """자산 규모 기준 투자 단계(Seed ~ Series C) 추정"""
+    """자산 규모로 투자 단계를 추정합니다. 확정 Series가 아니라 fallback 라벨입니다."""
+
     if not assets_amount:
-        return "Seed ~ Pre-A 추정"
+        return "자산추정 Seed~Pre-A"
     if assets_amount < 5_000_000_000:
-        return "Seed ~ Pre-A"
-    elif assets_amount < 20_000_000_000:
-        return "Series A ~ B"
-    elif assets_amount <= 50_000_000_000:
-        return "Series C"
-    else:
-        return "Series D 이상 (대형 외감법인)"
+        return "자산추정 Seed~Pre-A"
+    if assets_amount < 20_000_000_000:
+        return "자산추정 Series A~B"
+    if assets_amount <= 50_000_000_000:
+        return "자산추정 Series C"
+    return "자산추정 Series D 이상"
 
 
 # ===========================================================================
@@ -269,6 +277,7 @@ async def search_energy_startups_dart_only(
     max_assets_krw: int = 50_000_000_000,
     keywords: Optional[List[str]] = None,
     shuffle: bool = True,
+    exclude_corp_codes: Optional[set[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     외부 파일(companies.json 등) 없이 오직 DART 고유번호와 DART API만을 활용하여,
@@ -279,6 +288,7 @@ async def search_energy_startups_dart_only(
     5) 유효한 재무제표가 있는 5개 기업이 모두 채워질 때까지 반복 루프 수행
     """
     target_keywords = keywords or ["에너지", "배터리", "수소", "솔라", "신재생", "전력", "ess", "태양광"]
+    excluded = exclude_corp_codes or set()
     service = AsyncDartService()
     recommended_startups: List[Dict[str, Any]] = []
 
@@ -289,7 +299,7 @@ async def search_energy_startups_dart_only(
         seen_codes = set()
         candidate_corps: List[tuple[str, str]] = []
         for name, code in service.corp_map.items():
-            if code in seen_codes:
+            if code in seen_codes or code in excluded:
                 continue
             if any(kw in name for kw in target_keywords):
                 seen_codes.add(code)
@@ -303,48 +313,110 @@ async def search_energy_startups_dart_only(
             print(f"  🔍 DART 내 에너지 관련 법인 {len(candidate_corps)}개 발견. Seed~Series C 필터링 시작...")
 
 
-        # 2. 비동기 배치 검사 (15개씩 묶어서 처리하여 DART API 호출 효율화 및 조기 종료)
-        batch_size = 15
+        # 2. 비동기 배치 검사 (20개씩 묶어서 개요·재무·감사를 병렬 조회)
+        batch_size = 20
+        print(f"  ⚡ DART 병렬 탐색: 목표 {limit}개, 배치 {batch_size}개씩 동시 조회")
         for i in range(0, len(candidate_corps), batch_size):
             batch = candidate_corps[i : i + batch_size]
             overview_tasks = [service.get_company_overview(session, code) for _, code in batch]
-            overviews = await asyncio.gather(*overview_tasks)
+            overviews = await asyncio.gather(*overview_tasks, return_exceptions=True)
+            overviews = [
+                item if isinstance(item, dict) else {"status": "ERROR", "message": str(item)}
+                for item in overviews
+            ]
 
+            eligible_batch: List[tuple[str, str, Dict[str, Any]]] = []
             for (company_name, corp_code), overview in zip(batch, overviews):
                 if overview.get("status") != "000":
                     continue
-
-                # [필터 A] 법인 구분: 비상장 외감기업(E) 또는 코넥스 벤처(N)인가? (상장 대기업 K, Y 제외)
                 corp_cls = overview.get("corp_cls")
                 if corp_cls not in ["E", "N"]:
                     continue
-
-                # [필터 B] 설립일자: 10년 이내 스타트업인가? (기본 2015년 이후)
                 est_dt = overview.get("est_dt", "19000101")
                 if est_dt < f"{min_est_year}0101":
                     continue
+                eligible_batch.append((company_name, corp_code, overview))
 
-                # [필터 C] 재무제표 및 감사보고서 조회
-                fin_task = service.get_financial_statements(session, corp_code)
-                audit_task = service.get_audit_reports(session, corp_code)
-                financials, audits = await asyncio.gather(fin_task, audit_task)
+            if not eligible_batch:
+                if len(recommended_startups) >= limit:
+                    break
+                continue
 
+            fin_results, audit_results = await asyncio.gather(
+                asyncio.gather(
+                    *[
+                        service.get_financial_statements(session, code)
+                        for _, code, _ in eligible_batch
+                    ],
+                    return_exceptions=True,
+                ),
+                asyncio.gather(
+                    *[
+                        service.get_audit_reports(session, code)
+                        for _, code, _ in eligible_batch
+                    ],
+                    return_exceptions=True,
+                ),
+            )
+            fin_results = [
+                item if isinstance(item, dict) else {"status": "ERROR", "message": str(item)}
+                for item in fin_results
+            ]
+            audit_results = [
+                item if isinstance(item, dict) else {"status": "ERROR", "message": str(item)}
+                for item in audit_results
+            ]
+
+            audit_doc_tasks = []
+            audit_doc_indexes = []
+            parsed_rows = []
+            for index, ((company_name, corp_code, overview), financials, audits) in enumerate(
+                zip(eligible_batch, fin_results, audit_results)
+            ):
                 fin_items = financials.get("list") if financials.get("status") == "000" else None
                 audit_items = audits.get("list") if audits.get("status") == "000" else []
-
                 fin_summary = _extract_financial_summary_from_list(fin_items)
                 source_type = "정기보고서(사업보고서)" if any(fin_summary.values()) else "없음"
-
-                # 정기보고서 없으면 감사보고서 원문에서 파싱
+                parsed_rows.append(
+                    {
+                        "company_name": company_name,
+                        "corp_code": corp_code,
+                        "overview": overview,
+                        "audit_items": audit_items,
+                        "fin_summary": fin_summary,
+                        "source_type": source_type,
+                    }
+                )
                 if not any(fin_summary.values()) and audit_items:
                     latest_rcept_no = audit_items[0].get("rcept_no")
                     if latest_rcept_no:
-                        doc_financials = await service.extract_financials_from_audit_doc(session, latest_rcept_no)
-                        if doc_financials:
-                            fin_summary = doc_financials
-                            source_type = f"감사보고서 원문({audit_items[0].get('report_nm')})"
+                        audit_doc_indexes.append(index)
+                        audit_doc_tasks.append(
+                            service.extract_financials_from_audit_doc(session, latest_rcept_no)
+                        )
 
-                # [필터 D] 자산 규모 검증 (Series C 이하 = 자산 500억 이하)
+            if audit_doc_tasks:
+                doc_financials_list = await asyncio.gather(
+                    *audit_doc_tasks,
+                    return_exceptions=True,
+                )
+                for row_index, doc_financials in zip(audit_doc_indexes, doc_financials_list):
+                    if isinstance(doc_financials, Exception):
+                        continue
+                    if doc_financials:
+                        parsed_rows[row_index]["fin_summary"] = doc_financials
+                        report_nm = parsed_rows[row_index]["audit_items"][0].get("report_nm")
+                        parsed_rows[row_index]["source_type"] = f"감사보고서 원문({report_nm})"
+
+            for row in parsed_rows:
+                overview = row["overview"]
+                fin_summary = row["fin_summary"]
+                audit_items = row["audit_items"]
+                company_name = row["company_name"]
+                corp_code = row["corp_code"]
+                est_dt = overview.get("est_dt", "19000101")
+                corp_cls = overview.get("corp_cls")
+
                 assets_int = None
                 assets_str = fin_summary.get("자산총계")
                 if assets_str:
@@ -352,11 +424,10 @@ async def search_energy_startups_dart_only(
                         clean_num = assets_str.replace(",", "").replace("(", "").replace(")", "").strip()
                         assets_int = int(clean_num)
                         if assets_int > max_assets_krw:
-                            continue  # 500억 초과 시 Series D/대형법인으로 제외
+                            continue
                     except Exception:
                         pass
 
-                # 재무제표 데이터나 감사보고서가 유효하게 확인된 스타트업만 최종 선정
                 if any(fin_summary.values()) or audit_items:
                     stage_label = estimate_investment_stage(assets_int)
                     company_data = {
@@ -367,9 +438,11 @@ async def search_energy_startups_dart_only(
                         "address": overview.get("adres"),
                         "industry_code": overview.get("induty_code"),
                         "legal_class": "비상장 외감기업" if corp_cls == "E" else "코넥스 상장벤처",
+                        "asset_estimated_stage": stage_label,
                         "estimated_investment_stage": stage_label,
+                        "stage_source": "asset_estimate",
                         "financial_summary": fin_summary,
-                        "financial_source": source_type,
+                        "financial_source": row["source_type"],
                         "audit_reports_count": len(audit_items),
                         "dart_viewer_link": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={audit_items[0].get('rcept_no')}" if audit_items else None,
                     }
@@ -528,17 +601,107 @@ async def get_company_dart_data(
 
 
 # ---------------------------------------------------------------------------
+# LangGraph 연결 노드
+# ---------------------------------------------------------------------------
+async def dart_lookup_node(state: GraphState) -> Dict[str, Any]:
+    """DART에서 에너지 스타트업을 찾아 RAG가 사용할 State에 누적합니다.
+
+    ``search_energy_startups_dart_only``가 반환하는 JSON 구조를 그대로 유지하면서
+    공통 State에서 사용하는 ``id``와 ``name`` 필드만 추가합니다. 따라서 다음
+    RAG 노드는 ``financial_summary``와 ``dart_viewer_link``를 바로 사용할 수 있습니다.
+    """
+
+    already_selected = list(state.get("eligible_companies", []))
+    target_count = int(state.get("target_company_count", DEFAULT_COMPANY_COUNT))
+    needed_count = max(target_count - len(already_selected), 0)
+    fetch_count = needed_count * DART_FETCH_MULTIPLIER
+    search_attempts = int(state.get("search_attempts", 0)) + 1
+    seen_corp_codes = set(state.get("dart_seen_corp_codes", []))
+    seen_corp_codes.update(
+        str(company.get("corp_code", ""))
+        for company in already_selected
+        if company.get("corp_code")
+    )
+
+    rejected = list(state.get("dart_rejections", []))
+    try:
+        dart_results = (
+            await search_energy_startups_dart_only(
+                limit=fetch_count,
+                exclude_corp_codes=seen_corp_codes,
+            )
+            if needed_count
+            else []
+        )
+    except Exception as error:
+        dart_results = []
+        rejected.append(
+            {
+                "name": "DART 에너지 스타트업 탐색",
+                "reason": f"DART 조회 오류: {error}",
+            }
+        )
+
+    newly_selected: List[Dict[str, Any]] = []
+    for dart_company in dart_results:
+        corp_code = str(dart_company.get("corp_code", ""))
+        if not corp_code or corp_code in seen_corp_codes:
+            continue
+
+        # DART 반환 JSON은 그대로 두고 공통 State용 별칭만 추가합니다.
+        newly_selected.append(
+            {
+                **dart_company,
+                "id": corp_code,
+                "name": dart_company.get("company_name", ""),
+                "established_at": dart_company.get("established_date", ""),
+                "dart": dart_company,
+            }
+        )
+        seen_corp_codes.add(corp_code)
+
+    eligible_companies = [*already_selected, *newly_selected]
+    passed_names = [company.get("name", "") for company in newly_selected]
+    message = (
+        f"DART 에너지 스타트업 탐색: 신규 {len(newly_selected)}개, "
+        f"누적 {len(eligible_companies)}/{target_count}개"
+    )
+
+    print("\n[노드 실행] lookup_dart (agents/dart.py)")
+    print(
+        f"  입력 State : 기존={len(already_selected)}개, "
+        f"추가 필요={needed_count}개, DART 탐색={fetch_count}개(x{DART_FETCH_MULTIPLIER})"
+    )
+    print(
+        f"  반환 값    : 신규 기업={passed_names}, "
+        f"누적={len(eligible_companies)}개"
+    )
+
+    return {
+        "eligible_companies": eligible_companies,
+        "search_attempts": search_attempts,
+        "next_stage": "screen_startups",
+        "execution_log": [*state.get("execution_log", []), message],
+        "dart_rejections": rejected,
+        "dart_seen_corp_codes": list(seen_corp_codes),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 테스트 실행부
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     async def run_test():
         print("=" * 70)
-        print("🚀 [DART 자체 필터링] 에너지 산업 분야 Seed~Series C 스타트업 5개 탐색")
+        print(
+            f"🚀 [DART 자체 필터링] 에너지 산업 분야 Seed~Series C 스타트업 "
+            f"{DEFAULT_COMPANY_COUNT}개 탐색"
+        )
         print("   - 외부 companies.json 의존 없이 오직 DART 11만 법인 풀에서 직접 추출")
         print("   - 조건: 법인구분=비상장(E)/코넥스(N), 설립=2015년 이후, 자산=500억 이하")
         print("=" * 70)
 
-        results = await search_energy_startups_dart_only(limit=5)
+        results = await search_energy_startups_dart_only(limit=DEFAULT_COMPANY_COUNT)
         print(f"\n🎉 최종 발굴된 에너지 스타트업: 총 {len(results)}개\n")
 
         for idx, comp in enumerate(results, 1):
