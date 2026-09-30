@@ -17,15 +17,15 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.compitition import competition_node
 from agents.dart import dart_lookup_node, print_companies_for_rag
+from agents.embed import ensure_vector_db
 from agents.judge import judgement_node
-from agents.market_bridge import market_bridge_node
+from agents.market_bridge import enrich_company_for_competition, market_bridge_node
 from agents.report import build_report_payload, generate_report
 from agents.startup_screen import screen_startups_node
 from config import DEFAULT_COMPANY_COUNT, DEFAULT_MAX_SEARCH_ATTEMPTS, DEFAULT_WACC
 from state import GraphState
 
-# rag.py는 담당자 파일이므로 직접 수정하지 않습니다.
-# 구현이 있으면 우선 사용하고, 없으면 market_bridge로 RAG 계약을 맞춥니다.
+# rag.py: GraphState(dict)를 받아 eligible_companies에 market 필드를 붙여 반환
 try:
     from agents.rag import market_research_node as _rag_market_research_node
 except ImportError:
@@ -33,6 +33,61 @@ except ImportError:
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 LOG_DIR = PROJECT_ROOT / "outputs" / "logs"
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+
+# 터미널 로그용 한글 작업명 (내부 노드 id → 표시명)
+NODE_LABELS: dict[str, str] = {
+    "lookup_dart": "DART 공시·재무 탐색",
+    "screen_startups": "스타트업 적격 검증",
+    "validate_company_count": "목표 기업 수 확인",
+    "market_research": "시장성 조사 (RAG)",
+    "compare_competition": "경쟁사 조사",
+    "judge_investment": "투자 적합 판단",
+    "generate_report": "투자 보고서 생성",
+    "selection_failed": "기업 선정 실패 종료",
+}
+
+
+def _node_label(node_name: str) -> str:
+    return NODE_LABELS.get(node_name, node_name)
+
+
+def _print_node_result(
+    node_name: str,
+    *,
+    received: str,
+    returned: str,
+) -> None:
+    """각 노드가 받은 State와 반환한 값을 터미널에 표시합니다."""
+
+    print(f"\n[작업] {_node_label(node_name)}")
+    print(f"  입력 : {received}")
+    print(f"  결과 : {returned}")
+
+
+def save_final_companies(state: GraphState, *, tag: str = "judge") -> Path:
+    """judge 이후 최종 선정 기업 State를 outputs/ 에 JSON으로 저장합니다."""
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    companies = list(state.get("eligible_companies") or [])
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload = {
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "tag": tag,
+        "target_company_count": state.get("target_company_count"),
+        "company_count": len(companies),
+        "wacc": state.get("wacc"),
+        "eligible_companies": companies,
+        "judgement_rejections": list(state.get("judgement_rejections") or []),
+    }
+    path = OUTPUT_DIR / f"final_companies_{stamp}.json"
+    latest = OUTPUT_DIR / "final_companies_latest.json"
+    text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    path.write_text(text, encoding="utf-8")
+    latest.write_text(text, encoding="utf-8")
+    print(f"  [저장] 최종 선정 기업 {len(companies)}개 → {path}")
+    print(f"  [저장] 최신본 → {latest}")
+    return path
 
 
 class _TeeStream:
@@ -98,24 +153,26 @@ def _append_log(state: GraphState, message: str) -> list[str]:
     return [*state.get("execution_log", []), message]
 
 
-def _print_node_result(
-    node_name: str,
-    *,
-    received: str,
-    returned: str,
-) -> None:
-    """각 노드가 받은 State와 반환한 값을 터미널에 표시합니다."""
+def _company_ready_for_competition(company: dict[str, Any]) -> bool:
+    """rag가 description·subdomain·market을 채웠는지 확인합니다."""
 
-    print(f"\n[노드 실행] {node_name}")
-    print(f"  입력 State : {received}")
-    print(f"  반환 값    : {returned}")
+    market = company.get("market") if isinstance(company.get("market"), dict) else {}
+    has_description = bool(
+        company.get("description")
+        or market.get("description")
+        or company.get("intro")
+    )
+    has_subdomain = bool(company.get("subdomain") or market.get("subdomain"))
+    has_market = bool(market) and market.get("status") in {"rag", "web", "none"}
+    return has_description and has_subdomain and has_market
 
 
 def market_research_node(state: GraphState) -> dict[str, Any]:
-    """DART(+스크리닝) 결과를 RAG 계약으로 맞춘 뒤 경쟁사 비교로 넘깁니다.
+    """DART(+스크리닝) 결과에 시장 정보를 붙여 경쟁사 비교로 넘깁니다.
 
-    rag.py가 구현되어 있으면 그쪽을 쓰고, 아니면 market_bridge로
-    competition/judge가 기대하는 name·description·market·financials를 채웁니다.
+    1순위: agents/rag.py (Chroma RAG + 웹 fallback)
+    2순위: market_bridge (rag 실패·필드 누락 시만 보강)
+    반환은 JSON 파일이 아니라 GraphState partial update(dict)입니다.
     """
 
     companies = list(state.get("eligible_companies", []))
@@ -125,28 +182,39 @@ def market_research_node(state: GraphState) -> dict[str, Any]:
     )
 
     if callable(_rag_market_research_node):
-        result = _rag_market_research_node(state)
-        # rag 결과가 있어도 competition 입력 필드가 비면 bridge로 보강합니다.
-        bridged = market_bridge_node(
-            {
-                **state,
+        try:
+            result = _rag_market_research_node(state)
+            enriched = list(result.get("eligible_companies") or [])
+            # rag가 채운 필드는 유지하고, 누락된 기업만 bridge로 보강
+            finalized: list[dict[str, Any]] = []
+            bridged_count = 0
+            for company in enriched:
+                if _company_ready_for_competition(company):
+                    finalized.append(company)
+                else:
+                    finalized.append(enrich_company_for_competition(company))
+                    bridged_count += 1
+
+            message = (
+                f"시장성 평가: rag {len(enriched) - bridged_count}개, "
+                f"bridge 보강 {bridged_count}개"
+            )
+            print(f"  [시장성 조사] {message}")
+            return {
                 **result,
-                "eligible_companies": result.get(
-                    "eligible_companies",
-                    state.get("eligible_companies", []),
-                ),
+                "eligible_companies": finalized,
                 "market_attempts": result.get(
                     "market_attempts",
-                    state.get("market_attempts", 0),
+                    int(state.get("market_attempts", 0)) + 1,
                 ),
+                "next_stage": "compare_competition",
+                "execution_log": [
+                    *list(result.get("execution_log") or state.get("execution_log") or []),
+                    message,
+                ],
             }
-        )
-        return {
-            **result,
-            **bridged,
-            "market_attempts": bridged.get("market_attempts"),
-            "next_stage": "compare_competition",
-        }
+        except Exception as error:
+            print(f"  [시장성 조사] rag 실패 → bridge 사용: {error}")
 
     return market_bridge_node(state)
 
@@ -155,6 +223,12 @@ def report_node(state: GraphState) -> dict[str, Any]:
     """docs/report.md 계약으로 State를 변환한 뒤 PDF 보고서를 생성합니다."""
 
     companies = list(state.get("eligible_companies", []))
+    # judge 이후 최종 선정 기업 데이터를 outputs/ 에 먼저 저장 (PDF 실패와 무관)
+    try:
+        save_final_companies(state, tag="after_judge")
+    except Exception as error:
+        print(f"  [저장 실패] 최종 기업 JSON 저장 오류: {error}")
+
     report_payload = build_report_payload(state)
     output_path = PROJECT_ROOT / "outputs" / "investment_report.pdf"
     try:
@@ -169,7 +243,7 @@ def report_node(state: GraphState) -> dict[str, Any]:
         status = "failed"
         message = f"최종 보고서 생성 실패: {error}"
         returned = f"error={error}"
-        print(f"  [report] {message}")
+        print(f"  [보고서] {message}")
 
     _print_node_result(
         "generate_report",
@@ -225,8 +299,8 @@ def validate_company_count_node(state: GraphState) -> dict[str, Any]:
 
     _print_node_result(
         "validate_company_count",
-        received=f"eligible_companies={selected_count}개",
-        returned=f"company_count_is_valid={is_valid}",
+        received=f"현재 후보 기업={selected_count}개 / 목표={target_count}개",
+        returned=f"목표 충족={is_valid}",
     )
     return {
         "eligible_companies": companies,
@@ -252,19 +326,22 @@ def route_by_company_count(
             DEFAULT_MAX_SEARCH_ATTEMPTS,
         ):
             print(
-                "  [조건 분기] 목표 기업 수 부족 + 최대 탐색 횟수 초과 "
-                "→ selection_failed"
+                "  [다음 단계] 목표 기업 수 부족 + 최대 탐색 횟수 초과 "
+                f"→ {_node_label('selection_failed')}"
             )
             return "selection_failed"
         print(
-            f"  [조건 분기] {selected_count}/{target_count}개로 부족 "
-            "→ lookup_dart 재탐색"
+            f"  [다음 단계] {selected_count}/{target_count}개로 부족 "
+            f"→ {_node_label('lookup_dart')} 재탐색"
         )
         return "lookup_dart"
 
     # 목표 기업 수를 채우면 직전 노드가 지정한 다음 단계로 진행합니다.
     next_stage = state.get("next_stage", "market_research")
-    print(f"  [조건 분기] {selected_count}/{target_count}개 충족 " f"→ {next_stage}")
+    print(
+        f"  [다음 단계] {selected_count}/{target_count}개 충족 "
+        f"→ {_node_label(next_stage)}"
+    )
     return next_stage
 
 
@@ -568,6 +645,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="report-only 모드에서 사용할 JSON State 경로 (eligible_companies 포함)",
     )
+    parser.add_argument(
+        "--rebuild-embed",
+        action="store_true",
+        help="기존 chroma_db를 지우고 data/for_embed PDF를 다시 임베딩합니다.",
+    )
     return parser.parse_args()
 
 
@@ -609,6 +691,15 @@ def main() -> None:
     print(f"시나리오 시작 - 목표 기업 수: {initial_state['target_company_count']}")
     print(f"로그 파일         : {log_path}")
     print("=" * 70)
+
+    # 시장성 RAG용 벡터DB는 앱 시작 시 한 번만 준비 (있으면 재사용)
+    try:
+        ensure_vector_db(
+            force_rebuild=bool(getattr(args, "rebuild_embed", False)),
+            force_download=bool(getattr(args, "rebuild_embed", False)),
+        )
+    except Exception as error:
+        print(f"[embed] 벡터DB 준비 실패 (rag는 bridge로 대체될 수 있음): {error}")
 
     # dart_lookup_node가 비동기 DART API를 사용하므로 전체 그래프도 비동기로 실행합니다.
     result = asyncio.run(app.ainvoke(initial_state, config={"recursion_limit": 100}))

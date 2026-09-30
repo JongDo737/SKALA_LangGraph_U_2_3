@@ -44,11 +44,13 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_DIR = BASE_DIR / "chroma_db"
-INPUT_DIR = BASE_DIR / "data" / "input"  # 스타트업 탐색 에이전트의 출력(JSON)이 들어오는 폴더
-KSIC_CACHE = BASE_DIR / "data" / "ksic_cache.json"  # 업종코드 → 업종명 조회 결과 캐시
-OUTPUT_DIR = BASE_DIR / "data" / "output"  # 경쟁사 비교 에이전트로 넘길 결과(JSON)
+AGENTS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = AGENTS_DIR.parent
+BASE_DIR = PROJECT_ROOT  # 하위 호환 별칭
+DB_DIR = PROJECT_ROOT / "chroma_db"
+INPUT_DIR = PROJECT_ROOT / "data" / "input"  # 단독 실행용 JSON 입력
+KSIC_CACHE = PROJECT_ROOT / "data" / "ksic_cache.json"  # 업종코드 → 업종명 조회 결과 캐시
+OUTPUT_DIR = PROJECT_ROOT / "data" / "output"  # 단독 실행용 JSON 출력
 COLLECTION_NAME = "rag_documents"
 MODEL_NAME = "BAAI/bge-m3"
 
@@ -77,7 +79,7 @@ MAX_TOPIC_WORDS = 15  # 소개문처럼 긴 텍스트는 첫 문장에서 이 �
 TITLE_PATTERN = re.compile(r"분야에서\s*['‘“\"](.+?)['’”\"]")
 LIST_KEYS = ("eligible_companies", "candidates", "startups", "companies", "results", "items", "data")
 
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 def first_value(company, fields):

@@ -286,21 +286,56 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
     companies_payload = []
     for company in pending:
         market = company.get("market") if isinstance(company.get("market"), dict) else {}
+        market_context = (
+            company.get("market_context")
+            if isinstance(company.get("market_context"), dict)
+            else {}
+        )
+        inferred = (
+            market_context.get("inferred")
+            if isinstance(market_context.get("inferred"), dict)
+            else {}
+        )
+        summary = (
+            market_context.get("summary")
+            if isinstance(market_context.get("summary"), dict)
+            else {}
+        )
+        market_summary = (
+            market.get("summary") if isinstance(market.get("summary"), dict) else {}
+        )
+        description = (
+            company.get("description")
+            or market.get("description")
+            or inferred.get("description")
+            or company.get("intro")
+            or ""
+        )
+        # summary 가 있으면 짧은 시장 문맥을 description 뒤에 보강 (검색 질의는 name+subdomain만 씀)
+        market_blurb_parts = [
+            (market_summary or summary).get("target_market"),
+            (market_summary or summary).get("market_size"),
+        ]
+        market_blurb = " / ".join(part for part in market_blurb_parts if part)
+        if market_blurb and market_blurb not in description:
+            description = f"{description} | {market_blurb}".strip(" |")
+
         companies_payload.append(
             {
                 "name": company.get("name") or company.get("company_name"),
-                "description": (
-                    company.get("description")
-                    or market.get("description")
-                    or company.get("intro")
-                    or ""
-                ),
+                "description": description,
                 "subdomain": (
                     company.get("subdomain")
                     or market.get("subdomain")
+                    or inferred.get("subdomain")
                     or "energy infrastructure"
                 ),
-                "country": company.get("country") or company.get("region") or "KR",
+                "country": (
+                    company.get("country")
+                    or company.get("region")
+                    or inferred.get("country")
+                    or "KR"
+                ),
                 "financials": company.get("financials")
                 or (
                     [company.get("financial_summary")]
@@ -388,7 +423,7 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
         f"기존 적합 유지 {len(reuse)}개 "
         f"(유효={result.get('validation', {}).get('valid_company_count', 0)})"
     )
-    print("\n[노드 실행] compare_competition (agents/compitition.py)")
+    print("\n[작업] 경쟁사 조사")
     print(f"  입력 State : 기업={names}")
     print(
         f"  반환 값    : research_results={len(result.get('research_results', []))}개, "

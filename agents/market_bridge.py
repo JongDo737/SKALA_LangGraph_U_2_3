@@ -188,7 +188,7 @@ def market_bridge_node(state: GraphState) -> dict[str, Any]:
     input_companies = list(state.get("eligible_companies", []))
     enriched = [enrich_company_for_competition(company) for company in input_companies]
 
-    print("\n[노드 실행] market_research (agents/market_bridge.py)")
+    print("\n[작업] 시장성 조사 (브리지)")
     print(
         f"  입력 State : DART 기업="
         f"{[_company_name(company) for company in input_companies]}"
