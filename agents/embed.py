@@ -5,9 +5,9 @@
 # ---------------------------------------------------------------------------
 # 요약
 # ---------------------------------------------------------------------------
-# - 실행: python -m agents.embed --reset
+# - 실행: python -m agents.embed --reset [--redownload-pdfs]
 # - PDF 는 git 에 올리지 않습니다.
-#   FOR_EMBED_ZIP_URL(.env) 에서 zip 을 받아 data/for_embed/ 에 풀고 임베딩합니다.
+#   FOR_EMBED_ZIP_URL(.env) 은 zip 파일 공유 링크 또는 Drive 폴더 공유 링크를 받습니다.
 # - Semantic Chunking: 문장 임베딩 유사도(0.65 미만)가 떨어지는 지점에서 분할, 청크 200~1200자
 # - 스캔 PDF(텍스트 레이어 없음)는 macOS Vision OCR 로 읽음
 # - 문서 메타데이터: data/doc_metadata.json (없으면 LLM 자동 태깅)
@@ -67,11 +67,22 @@ def _google_drive_file_id(url: str) -> str | None:
     match = re.search(r"/file/d/([^/]+)", parsed.path)
     if match:
         return match.group(1)
+    # 폴더 링크는 파일 ID가 아님
+    if "/folders/" in parsed.path:
+        return None
     return parse_qs(parsed.query).get("id", [None])[0]
 
 
+def _google_drive_folder_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    if "drive.google.com" not in parsed.netloc:
+        return None
+    match = re.search(r"/folders/([^/?#]+)", parsed.path)
+    return match.group(1) if match else None
+
+
 def resolve_download_url(url: str) -> str:
-    """Google Drive 공유 링크면 직접 다운로드 URL로 변환합니다."""
+    """Google Drive 파일 공유 링크면 직접 다운로드 URL로 변환합니다."""
     file_id = _google_drive_file_id(url)
     if file_id:
         return f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -86,11 +97,91 @@ def list_pdfs(directory: Path | None = None) -> list[Path]:
     target = directory or PDF_DIR
     if not target.exists():
         return []
-    return sorted(target.glob("*.pdf"))
+    return sorted(
+        p
+        for p in target.glob("*.pdf")
+        if not p.name.startswith("._")
+    )
+
+
+def _clear_for_embed_pdfs() -> None:
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
+    for pdf in list_pdfs(PDF_DIR):
+        pdf.unlink(missing_ok=True)
+    for junk in PDF_DIR.glob("._*"):
+        junk.unlink(missing_ok=True)
+
+
+def _decode_zip_member_name(name: str) -> str:
+    """macOS zip이 UTF-8 이름을 cp437로 잘못 해석한 경우를 복구합니다."""
+    try:
+        repaired = name.encode("cp437").decode("utf-8")
+    except UnicodeError:
+        repaired = name
+    return unicodedata.normalize("NFC", repaired)
+
+
+def _copy_pdfs_from_tree(source_dir: Path) -> list[Path]:
+    """트리에서 PDF만 모아 data/for_embed 에 복사합니다."""
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
+    extracted: list[Path] = []
+    for pdf in source_dir.rglob("*.pdf"):
+        if pdf.name.startswith("._") or "__MACOSX" in pdf.parts:
+            continue
+        target = PDF_DIR / unicodedata.normalize("NFC", pdf.name)
+        if target.exists():
+            parent = unicodedata.normalize("NFC", pdf.parent.name)
+            target = PDF_DIR / f"{parent}_{target.name}"
+        shutil.copy2(pdf, target)
+        extracted.append(target)
+    return sorted(extracted)
+
+
+def _extract_zip_archive(zip_path: Path, destination: Path) -> None:
+    """한글 파일명을 복구하며 zip을 destination에 풉니다."""
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        for info in archive.infolist():
+            member_name = _decode_zip_member_name(info.filename)
+            if member_name.endswith("/"):
+                (destination / member_name).mkdir(parents=True, exist_ok=True)
+                continue
+            # AppleDouble / 메타파일 스킵
+            base = Path(member_name).name
+            if base.startswith("._") or member_name.startswith("__MACOSX/"):
+                continue
+            target = destination / member_name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as src, target.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+
+def _assert_zip_file(path: Path) -> None:
+    """HTML이 zip으로 저장된 경우를 즉시 감지합니다."""
+    with path.open("rb") as handle:
+        magic = handle.read(4)
+    if magic.startswith(b"PK"):
+        return
+    if magic.startswith(b"<!DO") or magic.startswith(b"<htm") or magic.startswith(b"<HTM"):
+        raise RuntimeError(
+            "다운로드 결과가 zip이 아니라 HTML입니다. "
+            "Google Drive '폴더' 공유 링크는 zip으로 받을 수 없습니다. "
+            "폴더 링크면 gdown으로 PDF를 받거나, zip 파일 공유 링크를 넣으세요."
+        )
+    raise RuntimeError(
+        f"다운로드 파일이 zip이 아닙니다 (magic={magic!r}). "
+        "FOR_EMBED_ZIP_URL이 실제 zip/파일 링크인지 확인하세요."
+    )
 
 
 def download_zip(url: str, destination: Path) -> Path:
     """zip URL을 받아 destination에 저장합니다."""
+    if _google_drive_folder_id(url):
+        raise RuntimeError(
+            "FOR_EMBED_ZIP_URL이 Google Drive 폴더 링크입니다. "
+            "폴더는 zip 다운로드 대신 PDF 직접 동기화를 사용합니다."
+        )
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     download_url = resolve_download_url(url)
     print(f"[embed] zip 다운로드: {download_url}")
@@ -122,39 +213,85 @@ def download_zip(url: str, destination: Path) -> Path:
             f"다운로드된 zip이 너무 작습니다 ({destination.stat().st_size} bytes). "
             "FOR_EMBED_ZIP_URL 또는 공유 권한을 확인하세요."
         )
+    _assert_zip_file(destination)
     print(f"[embed] zip 저장 완료: {destination} ({destination.stat().st_size:,} bytes)")
     return destination
 
 
+def download_drive_folder(url: str, *, clear_existing: bool = True) -> list[Path]:
+    """Google Drive 폴더의 PDF(또는 폴더 안 zip)를 data/for_embed/ 로 받습니다."""
+    try:
+        import gdown
+    except ImportError as error:
+        raise RuntimeError(
+            "Google Drive 폴더 다운로드에는 gdown이 필요합니다. "
+            "`pip install gdown` 후 다시 실행하세요."
+        ) from error
+
+    folder_id = _google_drive_folder_id(url)
+    if not folder_id:
+        raise RuntimeError(f"Drive 폴더 ID를 파싱하지 못했습니다: {url}")
+
+    if clear_existing:
+        _clear_for_embed_pdfs()
+
+    ZIP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # 이전에 잘못 받은 HTML zip이 남아 있으면 제거
+    if ZIP_PATH.exists() and not zipfile.is_zipfile(ZIP_PATH):
+        ZIP_PATH.unlink(missing_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="for_embed_folder_") as tmp:
+        tmp_dir = Path(tmp)
+        print(f"[embed] Drive 폴더 다운로드: {folder_id}")
+        gdown.download_folder(
+            id=folder_id,
+            output=str(tmp_dir),
+            quiet=False,
+            use_cookies=False,
+        )
+
+        # 폴더에 zip만 있는 경우(예: for_embed.zip)도 지원
+        for archive in tmp_dir.rglob("*.zip"):
+            if not zipfile.is_zipfile(archive):
+                print(f"[embed] zip이 아닌 파일 무시: {archive.name}")
+                continue
+            cached = ZIP_CACHE_DIR / archive.name
+            shutil.copy2(archive, cached)
+            print(f"[embed] 폴더 안 zip 발견 → 압축 해제: {archive.name}")
+            _extract_zip_archive(archive, tmp_dir)
+
+        extracted = _copy_pdfs_from_tree(tmp_dir)
+
+    if not extracted:
+        raise RuntimeError(
+            "Drive 폴더에서 PDF를 찾지 못했습니다. "
+            "공유 설정(링크 있는 모든 사용자)과 폴더 내용(PDF 또는 zip)을 확인하세요."
+        )
+
+    print(f"[embed] PDF {len(extracted)}개 폴더 동기화 → {PDF_DIR}")
+    return extracted
+
+
 def extract_zip_to_for_embed(zip_path: Path, *, clear_existing: bool = True) -> list[Path]:
     """zip을 data/for_embed/ 에 풉니다. 하위 폴더의 PDF도 모읍니다."""
-    PDF_DIR.mkdir(parents=True, exist_ok=True)
+    _assert_zip_file(zip_path)
     if clear_existing:
-        for pdf in list_pdfs(PDF_DIR):
-            pdf.unlink(missing_ok=True)
+        _clear_for_embed_pdfs()
 
     with tempfile.TemporaryDirectory(prefix="for_embed_") as tmp:
         tmp_dir = Path(tmp)
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            archive.extractall(tmp_dir)
-
-        extracted: list[Path] = []
-        for pdf in tmp_dir.rglob("*.pdf"):
-            target = PDF_DIR / pdf.name
-            if target.exists():
-                target = PDF_DIR / f"{pdf.parent.name}_{pdf.name}"
-            shutil.copy2(pdf, target)
-            extracted.append(target)
+        _extract_zip_archive(zip_path, tmp_dir)
+        extracted = _copy_pdfs_from_tree(tmp_dir)
 
     if not extracted:
         raise RuntimeError(f"zip 안에 PDF가 없습니다: {zip_path}")
 
     print(f"[embed] PDF {len(extracted)}개 압축 해제 → {PDF_DIR}")
-    return sorted(extracted)
+    return extracted
 
 
 def ensure_for_embed_pdfs(*, force_download: bool = False) -> list[Path]:
-    """임베딩용 PDF를 준비합니다. zip URL에서 받아 풀거나, 이미 있으면 재사용합니다."""
+    """임베딩용 PDF를 준비합니다. zip/폴더 URL에서 받거나, 이미 있으면 재사용합니다."""
     existing = list_pdfs()
     if existing and not force_download:
         print(f"[embed] 기존 PDF {len(existing)}개 사용: {PDF_DIR}")
@@ -169,6 +306,9 @@ def ensure_for_embed_pdfs(*, force_download: bool = False) -> list[Path]:
             "임베딩 PDF가 없습니다. .env 에 FOR_EMBED_ZIP_URL 을 설정하거나 "
             "data/for_embed/ 에 PDF를 두세요."
         )
+
+    if _google_drive_folder_id(url):
+        return download_drive_folder(url, clear_existing=True)
 
     zip_path = download_zip(url, ZIP_PATH)
     return extract_zip_to_for_embed(zip_path, clear_existing=True)

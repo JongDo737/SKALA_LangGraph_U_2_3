@@ -31,8 +31,26 @@ EXACT_STAGES = (
     "Series F",
     "IPO",
 )
+# 파이프라인 목표: Seed~Series C 이하만 통과
+ALLOWED_EXACT_STAGES = {
+    "Pre-Seed",
+    "Seed",
+    "Pre-A",
+    "Series A",
+    "Series B",
+    "Series C",
+}
+ALLOWED_ASSET_STAGES = {
+    "자산추정 Seed~Pre-A",
+    "자산추정 Series A~B",
+    "자산추정 Series C",
+}
 EXACT_STAGE_PATTERN = re.compile(
     r"^(Pre-Seed|Seed|Pre-A|Series [A-F]|IPO)$",
+    re.IGNORECASE,
+)
+LATE_STAGE_PATTERN = re.compile(
+    r"(Series\s*[D-F]|IPO|D\s*이상)",
     re.IGNORECASE,
 )
 STARTUP_HINT_PATTERN = re.compile(r"스타트업으로 분류|스타트업으로 판단|스타트업입니다")
@@ -164,6 +182,42 @@ def has_exact_investment_stage(stage: str | None) -> bool:
     """웹에서 확인된 단일 라운드만 정확한 단계로 봅니다."""
 
     return bool(stage and _canonicalize_stage(stage))
+
+
+def is_series_c_or_below(stage: str | None) -> bool:
+    """Seed~Series C(자산추정 포함)만 통과시킵니다. Series D 이상·IPO는 제외합니다."""
+
+    text = str(stage or "").strip()
+    if not text or text in {"unknown", "자산추정 확인 불가"}:
+        return True
+
+    exact = _canonicalize_stage(text)
+    if exact:
+        return exact in ALLOWED_EXACT_STAGES
+
+    if text in ALLOWED_ASSET_STAGES:
+        return True
+
+    if LATE_STAGE_PATTERN.search(text):
+        return False
+
+    # 허용 목록 밖의 자산추정 라벨은 보수적으로 제외
+    if text.startswith("자산추정"):
+        return False
+
+    return True
+
+
+def _company_stage(company: dict[str, Any], decision: ScreeningDecision | None = None) -> str:
+    if decision is not None:
+        return str(decision.investment_stage or "")
+    screening = company.get("screening") or {}
+    return str(
+        screening.get("investment_stage")
+        or company.get("estimated_investment_stage")
+        or company.get("asset_estimated_stage")
+        or ""
+    )
 
 
 def _is_already_screened(company: dict[str, Any]) -> bool:
@@ -481,7 +535,7 @@ async def screen_startups_node(state: GraphState) -> dict[str, Any]:
     print(f"  입력 State : 후보={[_company_name(item) for item in candidates]}")
     print(
         f"  처리 방식 : {len(candidates)}개 기업 병렬 스크리닝 "
-        f"(동시 {SCREENING_CONCURRENCY}개, Series는 웹검색 우선)"
+        f"(동시 {SCREENING_CONCURRENCY}개, Series는 웹검색 우선, Series C 이하만 통과)"
     )
 
     results: list[Any] = []
@@ -506,6 +560,12 @@ async def screen_startups_node(state: GraphState) -> dict[str, Any]:
             continue
 
         if decision is None:
+            stage = _company_stage(company)
+            if not is_series_c_or_below(stage):
+                reason = f"투자 단계 {stage}는 Series C 이하 대상이 아님"
+                rejected.append({"name": name, "reason": reason})
+                print(f"  제외: {name} / {reason}")
+                continue
             passed.append(company)
             print(f"  유지: {name} / 이전 스크리닝 통과")
             continue
@@ -513,6 +573,14 @@ async def screen_startups_node(state: GraphState) -> dict[str, Any]:
         if not decision.is_startup:
             rejected.append({"name": name, "reason": decision.reason})
             print(f"  제외: {name} / 일반사업 / {decision.reason}")
+            continue
+
+        if not is_series_c_or_below(decision.investment_stage):
+            reason = (
+                f"투자 단계 {decision.investment_stage}는 Series C 이하 대상이 아님"
+            )
+            rejected.append({"name": name, "reason": reason})
+            print(f"  제외: {name} / {reason}")
             continue
 
         enriched = deepcopy(company)
