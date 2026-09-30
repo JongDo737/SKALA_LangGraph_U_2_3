@@ -31,7 +31,7 @@ INK = colors.HexColor("#172F3D")
 MUTED = colors.HexColor("#64727A")
 LINE = colors.HexColor("#DCE2E3")
 PALE = colors.HexColor("#F6F5F1")
-ACCENT = colors.HexColor("#A66B38")
+ACCENT = colors.HexColor("#237C82")
 SOFT_BLUE = colors.HexColor("#EEF2F3")
 
 
@@ -68,24 +68,22 @@ class PageWriter:
         self.page += 1
         self.c.setFillColor(INK)
         self.c.rect(0, H - 6, W, 6, fill=1, stroke=0)
-        self.c.setFillColor(MUTED)
-        self.c.setFont(FONT, 8)
-        self.c.drawString(L, H - 42, "COMPREHENSIVE RESEARCH  /  ENERGY INFRASTRUCTURE")
-        self.c.drawRightString(R, H - 42, "INVESTMENT REPORT")
         self.c.setFillColor(INK)
         if self.page == 1 and title == "SUMMARY":
             self.c.setFillColor(ACCENT)
             self.c.setFont(BOLD, 9)
-            self.c.drawString(L, H - 67, "SUMMARY")
+            self.c.drawString(L, H - 52, "SUMMARY")
             self.c.setFillColor(INK)
-            self.c.setFont(BOLD, 18)
-            self.c.drawString(L, H - 94, "AI 데이터센터 전력 인프라")
-            self.c.drawString(L, H - 119, "스타트업 투자 분석")
-            self.y = H - 137
+            self.c.setFont(BOLD, 25)
+            self.c.drawString(L, H - 97, "AI 데이터센터 에너지 인프라")
+            self.c.setFillColor(MUTED)
+            self.c.setFont(BOLD, 15)
+            self.c.drawString(L, H - 125, "스타트업 투자 분석")
+            self.y = H - 144
         else:
             self.c.setFont(BOLD, 23)
-            self.c.drawString(L, H - 79, title)
-            self.y = H - 101
+            self.c.drawString(L, H - 86, title)
+            self.y = H - 108
             if subtitle:
                 clipped = str(subtitle).strip()
                 if len(clipped) > 72:
@@ -128,7 +126,6 @@ class PageWriter:
         self.c.line(L, 46, R, 46)
         self.c.setFillColor(MUTED)
         self.c.setFont(FONT, 8)
-        self.c.drawString(L, 30, "사실 · 추정 · 미확인 사항을 구분해 기재")
         self.c.drawRightString(R, 30, f"{self.page} / 5")
 
     def _fit(self, height: float) -> None:
@@ -140,7 +137,7 @@ class PageWriter:
         value: Any,
         size: float = 10,
         color=INK,
-        gap: float = 12,
+        gap: float = 17,
         indent: float = 0,
     ) -> None:
         p = Paragraph(
@@ -160,24 +157,25 @@ class PageWriter:
         p.drawOn(self.c, L + indent, self.y - height)
         self.y -= height + gap
 
-    def heading(self, label: str) -> None:
-        self._fit(28)
+    def heading(self, label: str, top_gap: float = 11) -> None:
+        self._fit(top_gap + 35)
+        self.y -= top_gap
         self.c.setFillColor(INK)
         self.c.setFont(BOLD, 11)
         self.c.drawString(L, self.y - 10, label)
         self.c.setStrokeColor(LINE)
         self.c.line(L, self.y - 17, R, self.y - 17)
-        self.y -= 31
+        self.y -= 35
 
     def field(self, label: str, value: Any) -> None:
         self._fit(26)
         self.c.setFillColor(MUTED)
         self.c.setFont(FONT, 9)
         self.c.drawString(L, self.y - 10, label)
-        self.text(value, 9, INK, 9, 100)
+        self.text(value, 9, INK, 11, 100)
         self.c.setStrokeColor(LINE)
         self.c.line(L, self.y + 4, R, self.y + 4)
-        self.y -= 10
+        self.y -= 16
 
     def table(
         self,
@@ -186,7 +184,7 @@ class PageWriter:
         widths: list[float],
         height: float = 25,
     ) -> None:
-        self._fit((len(rows) + 1) * height + 12)
+        self._fit((len(rows) + 1) * height + 18)
         self.c.setFillColor(INK)
         self.c.rect(L, self.y - height, R - L, height, fill=1, stroke=0)
         for index, row in enumerate([headers, *rows]):
@@ -214,7 +212,7 @@ class PageWriter:
                 self.c.setStrokeColor(LINE)
                 self.c.line(L, self.y - height, R, self.y - height)
             self.y -= height
-        self.y -= 12
+        self.y -= 18
 
     def analysis_block(self, number: int, title: str, body: str) -> None:
         """결론·근거를 한 행에 담는 간결한 리서치 메모 블록."""
@@ -232,7 +230,7 @@ class PageWriter:
             ),
         )
         _, text_height = paragraph.wrap(width, H)
-        block_height = max(54, text_height + 34)
+        block_height = max(62, text_height + 42)
         self._fit(block_height)
         self.c.setFillColor(ACCENT)
         self.c.setFont(BOLD, 16)
@@ -252,10 +250,11 @@ class PageWriter:
         series: list[dict[str, Any]],
         source: str,
         takeaway: str = "",
+        row_step: float = 31,
     ) -> None:
         """0을 기준으로 실제값과 전망값을 구분하는 시장 지표 막대그래프."""
         if not series:
-            self._fit(112)
+            self._fit(122)
             self.c.setFillColor(PALE)
             self.c.rect(L, self.y - 100, R - L, 100, fill=1, stroke=0)
             self.c.setFillColor(MUTED)
@@ -263,7 +262,7 @@ class PageWriter:
             self.c.drawString(
                 L + 17, self.y - 53, "[시장 지표와 출처가 전달되면 그래프 표시]"
             )
-            self.y -= 112
+            self.y -= 122
             return
         if len(series) > 5:
             raise ValueError("market_series는 최대 5개입니다.")
@@ -286,7 +285,7 @@ class PageWriter:
             raise ValueError(
                 "시장 그래프 수치가 모두 0이면 그래프를 표시할 수 없습니다."
             )
-        needed = 53 + len(series) * 31 + (22 if takeaway else 0)
+        needed = 53 + len(series) * row_step + (22 if takeaway else 0)
         self._fit(needed)
         self.c.setStrokeColor(INK)
         self.c.line(L, self.y - 1, R, self.y - 1)
@@ -316,7 +315,7 @@ class PageWriter:
             self.c.setFillColor(INK)
             self.c.setFont(BOLD, 8)
             self.c.drawRightString(R - 12, y - 8, f"{item['value']:g}")
-            y -= 31
+            y -= row_step
         self.c.setFillColor(MUTED)
         self.c.setFont(FONT, 7.5)
         self.c.drawString(L + 12, y + 1, f"출처: {source}  |  막대는 0부터 시작")
@@ -356,8 +355,15 @@ def _candidate_decision_label(decision: str) -> str:
 
 
 def _pick_featured(companies: list[dict[str, Any]]) -> dict[str, Any] | None:
-    scored: list[tuple[float, dict[str, Any]]] = []
+    recommended = []
     for company in companies:
+        judgement = company.get("judgement")
+        if isinstance(judgement, dict) and _candidate_decision_label(
+            str(judgement.get("decision") or "")
+        ) == "추천":
+            recommended.append(company)
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for company in recommended or companies:
         judgement = (
             company.get("judgement")
             if isinstance(company.get("judgement"), dict)
@@ -737,50 +743,63 @@ def generate_report(
         1 if decision == "recommend" else 0,
     )
     held = sum(item.get("decision") == "보류" for item in candidates)
-    top = p.y
+    top = p.y + 14
     side_x = R - 128
     left_width = side_x - L - 27
     p.c.setFillColor(MUTED)
     p.c.setFont(BOLD, 9)
-    p.c.drawString(L, top - 17, "최종 선정")
+    p.c.drawString(L, top - 16, "최종 선정")
     selected_name = company.get("name") if decision == "recommend" else "선정 기업 없음"
     selected = Paragraph(
         escape(_v(selected_name)),
         ParagraphStyle(
             "selected_company",
             fontName=BOLD,
-            fontSize=18,
-            leading=23,
-            textColor=ACCENT,
+            fontSize=21,
+            leading=26,
+            textColor=INK,
             wordWrap="CJK",
         ),
     )
     _, selected_height = selected.wrap(left_width, H)
     if selected_height > 46:
         raise ValueError("SUMMARY 선정 기업명이 너무 깁니다.")
-    selected.drawOn(p.c, L, top - 28 - selected_height)
-    left_y = top - 39 - selected_height
+    selected.drawOn(p.c, L, top - 21 - selected_height)
+    left_y = top - 31 - selected_height
+    notes_top = left_y
 
-    def summary_note(label: str, value: Any, y: float) -> float:
-        p.c.setFillColor(MUTED)
-        p.c.setFont(BOLD, 8.5)
-        p.c.drawString(L, y - 9, label)
+    def summary_note(label: str, value: Any, y: float, emphasis: str = "") -> float:
+        featured = emphasis == "primary"
+        text_x = L + 88
+        text_width = left_width - 99
         paragraph = Paragraph(
             escape(_v(value)).replace("\n", "<br/>"),
             ParagraphStyle(
                 "summary_note",
-                fontName=FONT,
-                fontSize=9.2,
+                fontName=BOLD if featured else FONT,
+                fontSize=9.5 if featured else 9.2,
                 leading=14,
                 textColor=INK,
                 wordWrap="CJK",
             ),
         )
-        _, height = paragraph.wrap(left_width, H)
-        if height > 42:
+        _, height = paragraph.wrap(text_width, H)
+        if height > 28:
             raise ValueError(f"SUMMARY의 '{label}' 문장이 너무 깁니다.")
-        paragraph.drawOn(p.c, L, y - 16 - height)
-        return y - 25 - height
+        row_height = max(47 if featured else 40, height + 16)
+        if featured:
+            p.c.setFillColor(PALE)
+            p.c.rect(L, y - row_height, left_width, row_height - 3, fill=1, stroke=0)
+            p.c.setFillColor(ACCENT)
+            p.c.rect(L, y - row_height, 3, row_height - 3, fill=1, stroke=0)
+        else:
+            p.c.setStrokeColor(LINE)
+            p.c.line(L, y, L + left_width, y)
+        p.c.setFillColor(ACCENT if featured else INK if emphasis == "risk" else MUTED)
+        p.c.setFont(BOLD, 8.5)
+        p.c.drawString(L + 11, y - 16, label)
+        paragraph.drawOn(p.c, text_x, y - (row_height + height) / 2)
+        return y - row_height
 
     reasons = state.get("summary_reasons") or [
         (
@@ -790,42 +809,43 @@ def generate_report(
         )
     ]
     left_y = summary_note(
-        "추천 근거" if decision == "recommend" else "보류 이유", reasons[0], left_y
+        "추천 근거" if decision == "recommend" else "보류 이유",
+        reasons[0],
+        left_y,
+        "primary",
     )
     if len(reasons) > 1:
         left_y = summary_note("추가 판단", reasons[1], left_y)
     left_y = summary_note(
-        "핵심 위험", state.get("top_risk", "[핵심 위험 입력 대기]"), left_y
+        "핵심 위험", state.get("top_risk", "[핵심 위험 입력 대기]"), left_y, "risk"
     )
     left_y = summary_note(
         "다음 판단 조건", state.get("next_check", "[추가 확인 사항 입력 대기]"), left_y
     )
 
     p.c.setStrokeColor(LINE)
-    p.c.line(side_x - 15, top - 7, side_x - 15, top - 173)
+    p.c.line(side_x - 15, notes_top, side_x - 15, left_y)
+    metric_height = (notes_top - left_y) / 3
     for index, (label, value) in enumerate(
         (("검토", len(candidates)), ("추천", recommended), ("보류", held))
     ):
-        y = top - 14 - index * 55
+        y = notes_top - index * metric_height
         p.c.setFillColor(MUTED)
         p.c.setFont(FONT, 9)
-        p.c.drawString(side_x, y - 9, label)
+        p.c.drawString(side_x, y - 16, label)
         p.c.setFillColor(ACCENT if label == "추천" else INK)
         p.c.setFont(BOLD, 21)
-        p.c.drawRightString(R - 11, y - 25, str(value))
+        p.c.drawRightString(R - 11, y - 36, str(value))
         if index < 2:
             p.c.setStrokeColor(LINE)
-            p.c.line(side_x, y - 42, R, y - 42)
-    bottom = min(left_y - 4, top - 177)
+            p.c.line(side_x, y - metric_height, R, y - metric_height)
+    bottom = left_y - 10
     if bottom < H / 2:
         raise ValueError("SUMMARY가 반 페이지를 넘었습니다. 문장을 줄이세요.")
     p.c.setStrokeColor(LINE)
     p.c.line(L, bottom, R, bottom)
 
-    p.start(
-        "01  종합 분석",
-        state.get("analysis_headline") or "기업의 사업·기술·검증 수준을 함께 읽습니다",
-    )
+    p.start("01  종합 분석", "")
     points = state.get("analysis_points", [])
     if points:
         for i, point in enumerate(points, 1):
@@ -856,24 +876,29 @@ def generate_report(
         p.text(state.get("hold_overview", "[전부 보류 사유 입력 대기]"))
         p.heading("추가 검증 사항")
         p.text(state.get("missing_evidence", "[검증이 필요한 정보 입력 대기]"))
+    if len(candidates) > 5:
+        p.heading("주요 리스크 · 한계")
+        p.text(state.get("risks", "[사업·기술·규제·경쟁 리스크 입력 대기]"), 9)
 
-    p.start(
-        "02  시장 · 경쟁",
-        state.get("market_headline") or "시장 성장과 기업의 실제 기회를 구분합니다",
-    )
-    p.heading("시장 지표")
+    p.start("02  시장 · 경쟁", "")
+    competitors = state.get("competitors", [])
+    market_series = state.get("market_series", [])
+    dense_market = len(market_series) >= 4 and len(competitors) >= 3
+    market_heading_gap = 5 if dense_market else 11
+    p.heading("시장 지표", market_heading_gap)
     p.market_chart(
         state.get("market_metric_label", ""),
         state.get("market_metric_unit", ""),
-        state.get("market_series", []),
+        market_series,
         state.get("market_metric_source", ""),
         state.get("market_chart_takeaway", ""),
+        25 if dense_market else 31,
     )
-    p.heading("시장 수치가 뜻하는 것")
-    p.text(state.get("market", "[시장 규모·성장 근거 입력 대기]"))
-    p.text(state.get("demand", "[수요 요인 입력 대기]"))
-    p.heading("경쟁사 비교")
-    competitors = state.get("competitors", [])
+    p.heading("시장 수치가 뜻하는 것", market_heading_gap)
+    market_text_gap = 14 if dense_market else 17
+    p.text(state.get("market", "[시장 규모·성장 근거 입력 대기]"), gap=market_text_gap)
+    p.text(state.get("demand", "[수요 요인 입력 대기]"), gap=market_text_gap)
+    p.heading("경쟁사 비교", market_heading_gap)
     if competitors:
         p.table(
             ["기업", "제품·대상", "차이·근거"],
@@ -882,21 +907,14 @@ def generate_report(
                 for x in competitors
             ],
             [115, 145, R - L - 260],
-            35,
+            30 if dense_market else 35,
         )
     else:
         p.text("[동일 기준으로 비교한 경쟁사 정보 입력 대기]")
-    p.heading("차별성 판단")
-    p.text(state.get("differentiation", "[검증된 차별점 입력 대기]"))
-    if len(candidates) > 5:
-        p.heading("주요 리스크 · 한계")
-        p.text(state.get("risks", "[사업·기술·규제·경쟁 리스크 입력 대기]"), 9)
+    p.heading("차별성 판단", market_heading_gap)
+    p.text(state.get("differentiation", "[검증된 차별점 입력 대기]"), gap=market_text_gap)
 
-    p.start(
-        "03  투자 판단 · 리스크",
-        state.get("decision_headline")
-        or "점수와 근거를 함께 읽고 미확인 사항을 남깁니다",
-    )
+    p.start("03  투자 판단 · 리스크", "")
     p.heading("평가 기준별 판단")
     scores = state.get("scores", [])
     if scores:

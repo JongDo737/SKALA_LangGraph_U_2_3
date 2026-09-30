@@ -2,6 +2,8 @@
 
 `agents/report.py`는 앞 에이전트의 판단을 새로 계산하지 않고 PDF에 배치합니다. 교수님 실습 설명의 보고서 조건은 첫 장 SUMMARY에 전체 판단의 결론을 문서 소개 없이 A4 반 페이지 이내로 요약하고, 모든 후보를 보류하면 그 이유를 적으며, 마지막 장 REFERENCE에 실제 사용한 자료만 넣고, 전체를 5장 이내로 구성하는 것입니다. 현재 SUMMARY는 선정 기업, 추천 근거 또는 보류 이유, 추가 판단, 핵심 위험, 다음 판단 조건과 후보 수를 표시합니다.
 
+추천 기업이 여러 곳이면 `judgement.external_market_score`가 가장 높은 추천 기업 한 곳을 SUMMARY의 최종 선정 및 상세 분석 대상으로 표시합니다. 동점이면 입력 순서를 따릅니다. 모두 보류면 최고 점수 후보를 보류 사유 설명의 대표 사례로 사용하며 최종 선정 기업은 표시하지 않습니다.
+
 LangGraph에서는 `app.py`의 `report_node`가 `build_report_payload(state)`로 GraphState를 아래 계약으로 변환한 뒤 `generate_report`를 호출합니다. 변환에 쓰는 원천 데이터는 다음과 같습니다.
 
 - DART: `financial_summary`, `dart_viewer_link`, `estimated_investment_stage`
@@ -27,7 +29,6 @@ python -m agents.report --input /path/to/report_state.json --output outputs/repo
 ## 선택 필드
 
 - `summary_reasons`(최대 2개), `top_risk`, `next_check`, `analysis_detail`, `analysis_points`(최대 4개, 각 `title`, `body`)
-- `analysis_headline`, `market_headline`, `decision_headline`: 각 본문 페이지 상단에 놓을 한두 줄짜리 결론. 자료에서 확인된 판단만 적고, 없으면 중립적인 기본 문장을 표시
 - `company`: `problem`, `idea`, `technology`, `customers_revenue`, `team`, `traction`
 - `hold_overview`, `missing_evidence`: 모두 보류일 때의 공통 설명
 - `market`, `demand`, `differentiation`
