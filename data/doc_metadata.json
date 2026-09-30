@@ -1,0 +1,107 @@
+{
+  "데이터 센터 냉각 시장 규모, 점유율 | 산업 보고서 [2034].pdf": {
+    "domain": "데이터센터",
+    "sub_domain": "데이터센터 냉각",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "데이터센터 냉각, 액체냉각, 액침냉각, 시장 규모, CAGR"
+  },
+  "세계 데이터센터 전력 수급 현황 및 전망(IEA).pdf": {
+    "domain": "데이터센터",
+    "sub_domain": "데이터센터 전력 수급",
+    "doc_type": "policy_report",
+    "region": "global",
+    "keywords": "데이터센터 전력 소비, IEA, 전력 수요 전망, AI"
+  },
+  "데이터센터 On-Line UPS를 이용한 전력망 FFR 기술 개발.pdf.pdf": {
+    "domain": "데이터센터",
+    "sub_domain": "데이터센터 UPS·전력망 주파수 응답",
+    "doc_type": "paper",
+    "region": "KR",
+    "keywords": "UPS, FFR, 계통 안정화, ESS, 주파수"
+  },
+  "데이터센터 증가 지역의 중기 전력수요예측.pdf.pdf": {
+    "domain": "데이터센터",
+    "sub_domain": "데이터센터 전력수요 예측",
+    "doc_type": "paper",
+    "region": "KR",
+    "keywords": "전력수요예측, 데이터센터, 중기 예측"
+  },
+  "수도권 집중 데이터센터 분산 배치를 통한 전력계통 안정도 해석.pdf.pdf": {
+    "domain": "데이터센터",
+    "sub_domain": "데이터센터 전력계통 안정도",
+    "doc_type": "paper",
+    "region": "KR",
+    "keywords": "전력계통, 안정도, 데이터센터 분산 배치, 수도권"
+  },
+  "인공지능을 사용한 가정용 전력 사용량 예측.pdf.pdf": {
+    "domain": "에너지 AI",
+    "sub_domain": "가정용 전력 사용량 예측",
+    "doc_type": "paper",
+    "region": "KR",
+    "keywords": "전력 사용량 예측, 인공지능, 가정용"
+  },
+  "2차 전지 시장 규모 및 점유율, 성장 보고서 2035.pdf": {
+    "domain": "배터리·에너지저장",
+    "sub_domain": "2차전지(이차전지)",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "2차전지, 배터리, 시장 규모, CAGR, 전기차"
+  },
+  "전력망용 리튬 이온 배터리 시장 규모 및 성장 분석 (2035년).pdf": {
+    "domain": "배터리·에너지저장",
+    "sub_domain": "전력망용 리튬이온 배터리(ESS)",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "ESS, 리튬이온, 전력망, 에너지저장, 시장 규모"
+  },
+  "고분자 소재를 이용한 이차전지 열폭주 제어 기술 개발.pdf.pdf": {
+    "domain": "배터리·에너지저장",
+    "sub_domain": "이차전지 열폭주 제어",
+    "doc_type": "paper",
+    "region": "KR",
+    "keywords": "열폭주, 리튬이온 배터리, 고분자 소재, 화재"
+  },
+  "태양열 집광기 시장 규모 및 점유율 | 2035년 성장 전망.pdf": {
+    "domain": "재생에너지",
+    "sub_domain": "태양열 집광기(CSP)",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "태양열, 집광형 태양열 발전, CSP, 재생에너지, 시장 규모 (태양광 PV 아님)"
+  },
+  "풍력 터빈 시장 규모 및 점유율, 2035년 성장 전망.pdf": {
+    "domain": "재생에너지",
+    "sub_domain": "풍력 터빈",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "풍력, 터빈, 재생에너지, 시장 규모"
+  },
+  "핵융합 시장 규모 및 점유율, 성장 전망 2027-2036.pdf": {
+    "domain": "핵융합",
+    "sub_domain": "핵융합",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "핵융합, 시장 규모, 성장 전망"
+  },
+  "액화 가스 실린더(LGC) 시장 규모, 2035년 전망 보고서.pdf": {
+    "domain": "산업가스·에너지",
+    "sub_domain": "액화가스 실린더(LGC)",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "액화가스, 실린더, LGC, 시장 규모"
+  },
+  "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf": {
+    "domain": "재생에너지",
+    "sub_domain": "수상 태양광 발전",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "부유식 태양광, 수상 태양광 발전, 시장 규모, 성장 전망, 아시아 태평양, 전력망 안정성"
+  },
+  "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf": {
+    "domain": "재생에너지",
+    "sub_domain": "태양광 모듈",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "태양광 모듈, 시장 규모, 성장 전망, 재생에너지, 아시아 태평양, 설치 유형"
+  }
+}
