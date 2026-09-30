@@ -477,7 +477,7 @@ async def screen_startups_node(state: GraphState) -> dict[str, Any]:
     rejected: list[dict[str, str]] = list(state.get("startup_rejections", []))
     semaphore = asyncio.Semaphore(SCREENING_CONCURRENCY)
 
-    print("\n[노드 실행] screen_startups (agents/startup_screen.py)")
+    print("\n[작업] 스타트업 적격 검증")
     print(f"  입력 State : 후보={[_company_name(item) for item in candidates]}")
     print(
         f"  처리 방식 : {len(candidates)}개 기업 병렬 스크리닝 "

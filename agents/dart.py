@@ -1388,7 +1388,7 @@ async def dart_lookup_node(state: GraphState) -> Dict[str, Any]:
         f"누적 {len(eligible_companies)}/{target_count}개"
     )
 
-    print("\n[노드 실행] lookup_dart (agents/dart.py)")
+    print("\n[작업] DART 공시·재무 탐색")
     print(
         f"  입력 State : 기존={len(already_selected)}개, "
         f"추가 필요={needed_count}개, DART 탐색={fetch_count}개(x{DART_FETCH_MULTIPLIER})"

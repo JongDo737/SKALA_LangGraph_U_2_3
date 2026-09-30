@@ -64,7 +64,11 @@ def market_description(summary):
         summary.get("target_market"),
         f"시장 규모: {summary['market_size']}" if summary.get("market_size") else None,
         f"성장성: {summary['growth']}" if summary.get("growth") else None,
-        f"수요 근거: {summary['demand_evidence']}" if summary.get("demand_evidence") else None,
+        (
+            f"수요 근거: {summary['demand_evidence']}"
+            if summary.get("demand_evidence")
+            else None
+        ),
     ]
 
     return ". ".join(part for part in parts if part)
@@ -165,7 +169,9 @@ def market_research_node(state: dict[str, Any]) -> dict[str, Any]:
     execution_log = list(state.get("execution_log") or [])
 
     print("\n[작업] 시장성 조사 (RAG)")
-    print(f"  입력 기업 수 : {len(companies)} / 목표={state.get('target_company_count')}")
+    print(
+        f"  입력 기업 수 : {len(companies)} / 목표={state.get('target_company_count')}"
+    )
 
     enriched = [to_state_company(company) for company in get_agent().run(companies)]
 
