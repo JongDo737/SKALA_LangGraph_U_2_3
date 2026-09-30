@@ -4,14 +4,20 @@
     "sub_domain": "데이터센터 냉각",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "데이터센터 냉각, 액체냉각, 액침냉각, 시장 규모, CAGR"
+    "keywords": "데이터센터 냉각, 액체냉각, 액침냉각, 시장 규모, CAGR",
+    "publisher": "Research Nester",
+    "year": "2026",
+    "url": "https://www.researchnester.com/kr/reports/data-center-cooling-market/4756"
   },
   "세계 데이터센터 전력 수급 현황 및 전망(IEA).pdf": {
     "domain": "데이터센터",
     "sub_domain": "데이터센터 전력 수급",
     "doc_type": "policy_report",
     "region": "global",
-    "keywords": "데이터센터 전력 소비, IEA, 전력 수요 전망, AI"
+    "keywords": "데이터센터 전력 소비, IEA, 전력 수요 전망, AI",
+    "publisher": "IEA",
+    "year": "2025",
+    "url": "https://www.iea.org/reports/energy-and-ai"
   },
   "데이터센터 On-Line UPS를 이용한 전력망 FFR 기술 개발.pdf.pdf": {
     "domain": "데이터센터",
@@ -46,14 +52,20 @@
     "sub_domain": "2차전지(이차전지)",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "2차전지, 배터리, 시장 규모, CAGR, 전기차"
+    "keywords": "2차전지, 배터리, 시장 규모, CAGR, 전기차",
+    "publisher": "Research Nester",
+    "year": "2025",
+    "url": "https://www.researchnester.com/kr/reports/secondary-battery-market/8318"
   },
   "전력망용 리튬 이온 배터리 시장 규모 및 성장 분석 (2035년).pdf": {
     "domain": "배터리·에너지저장",
     "sub_domain": "전력망용 리튬이온 배터리(ESS)",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "ESS, 리튬이온, 전력망, 에너지저장, 시장 규모"
+    "keywords": "ESS, 리튬이온, 전력망, 에너지저장, 시장 규모",
+    "publisher": "Research Nester",
+    "year": "2026",
+    "url": "https://www.researchnester.com/kr/reports/li-ion-battery-for-grid-market/8719"
   },
   "고분자 소재를 이용한 이차전지 열폭주 제어 기술 개발.pdf.pdf": {
     "domain": "배터리·에너지저장",
@@ -67,41 +79,89 @@
     "sub_domain": "태양열 집광기(CSP)",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "태양열, 집광형 태양열 발전, CSP, 재생에너지, 시장 규모 (태양광 PV 아님)"
+    "keywords": "태양열, 집광형 태양열 발전, CSP, 재생에너지, 시장 규모 (태양광 PV 아님)",
+    "publisher": "Research Nester",
+    "year": "2026",
+    "url": "https://www.researchnester.com/kr/reports/solar-concentrator-market/8673"
   },
   "풍력 터빈 시장 규모 및 점유율, 2035년 성장 전망.pdf": {
     "domain": "재생에너지",
     "sub_domain": "풍력 터빈",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "풍력, 터빈, 재생에너지, 시장 규모"
+    "keywords": "풍력, 터빈, 재생에너지, 시장 규모",
+    "publisher": "Research Nester",
+    "year": "2025",
+    "url": "https://www.researchnester.com/kr/reports/wind-turbine-market/8317"
   },
   "핵융합 시장 규모 및 점유율, 성장 전망 2027-2036.pdf": {
     "domain": "핵융합",
     "sub_domain": "핵융합",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "핵융합, 시장 규모, 성장 전망"
+    "keywords": "핵융합, 시장 규모, 성장 전망",
+    "publisher": "Research Nester",
+    "year": "2026",
+    "url": "https://www.researchnester.com/kr/reports/nuclear-fusion-market/7377"
   },
   "액화 가스 실린더(LGC) 시장 규모, 2035년 전망 보고서.pdf": {
     "domain": "산업가스·에너지",
     "sub_domain": "액화가스 실린더(LGC)",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "액화가스, 실린더, LGC, 시장 규모"
+    "keywords": "액화가스, 실린더, LGC, 시장 규모",
+    "publisher": "Research Nester",
+    "year": "2025",
+    "url": "https://www.researchnester.com/kr/reports/liquid-gas-cylinder-market/8246"
   },
   "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf": {
     "domain": "재생에너지",
     "sub_domain": "수상 태양광 발전",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "부유식 태양광, 수상 태양광 발전, 시장 규모, 성장 전망, 아시아 태평양, 전력망 안정성"
+    "keywords": "부유식 태양광, 수상 태양광 발전, 시장 규모, 성장 전망, 아시아 태평양, 전력망 안정성",
+    "publisher": "Research Nester",
+    "year": "2025",
+    "url": "https://www.researchnester.com/kr/reports/floating-solar-pv-market/8349"
   },
   "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf": {
     "domain": "재생에너지",
     "sub_domain": "태양광 모듈",
     "doc_type": "market_report",
     "region": "global",
-    "keywords": "태양광 모듈, 시장 규모, 성장 전망, 재생에너지, 아시아 태평양, 설치 유형"
+    "keywords": "태양광 모듈, 시장 규모, 성장 전망, 재생에너지, 아시아 태평양, 설치 유형",
+    "publisher": "Research Nester",
+    "year": "2025",
+    "url": "https://www.researchnester.com/kr/reports/solar-pv-module-market/8385"
+  },
+  "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf": {
+    "domain": "산업가스·에너지",
+    "sub_domain": "수소연료전지",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "수소연료전지, 시장 규모, 성장 전망, 북미, 아시아 태평양, 연료전지차",
+    "publisher": "Research Nester",
+    "year": "2025",
+    "url": "https://www.researchnester.com/kr/reports/hydrogen-fuel-cell-market/6348"
+  },
+  "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf": {
+    "domain": "산업가스·에너지",
+    "sub_domain": "수소연료전지",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "연료전지, 시장 규모, 성장 전망, 수소 경제, 청정 에너지, 수소 인프라",
+    "publisher": "Global Market Insights",
+    "year": "2025",
+    "url": "https://www.gminsights.com/ko/industry-analysis/fuel-cell-market"
+  },
+  "태양광 발전 시장 규모, 점유율, 동향 | 성장 보고서 [2032].pdf": {
+    "domain": "재생에너지",
+    "sub_domain": "태양광 발전(PV)",
+    "doc_type": "market_report",
+    "region": "global",
+    "keywords": "태양광 발전, 시장 규모, 재생에너지, 태양광 모듈, 성장 동향, 아시아 태평양",
+    "publisher": "Fortune Business Insights",
+    "year": "2024",
+    "url": "https://www.fortunebusinessinsights.com/ko/industry-reports/solar-power-market-100764"
   }
 }

@@ -81,7 +81,12 @@ class GraphState(TypedDict, total=False):
     judgement_rejections: list[dict[str, str]]
     competition_payload: dict[str, Any]
     judgement_payload: dict[str, Any]
+    # judge 직후·report 직전 핸드오프: 적합 기업 요약 / 전체 평가 리스트
+    final_suitable_companies: list[dict[str, Any]]
+    company_evaluations: list[dict[str, Any]]
+    dart_fetch_requested: NotRequired[int]
     report_payload: dict[str, Any]
+    report_prep_status: NotRequired[str]
     wacc: float
 
     # Send로 병렬 실행된 기업별 결과를 operator.add 리듀서로 합칩니다.

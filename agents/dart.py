@@ -1497,6 +1497,18 @@ async def dart_lookup_node(state: GraphState) -> Dict[str, Any]:
     needed_count = max(target_count - len(already_selected), 0)
     fetch_count = needed_count * DART_FETCH_MULTIPLIER
     search_attempts = int(state.get("search_attempts", 0)) + 1
+    # 최초 DART 요청 건수(SUMMARY 검토 칸). 재탐색 시에도 첫 값을 유지합니다.
+    previous_fetch = state.get("dart_fetch_requested")
+    try:
+        dart_fetch_requested = (
+            int(previous_fetch)
+            if previous_fetch not in (None, "")
+            else fetch_count
+        )
+    except (TypeError, ValueError):
+        dart_fetch_requested = fetch_count
+    if search_attempts == 1 and fetch_count:
+        dart_fetch_requested = fetch_count
     seen_corp_codes = set(state.get("dart_seen_corp_codes", []))
     seen_corp_codes.update(
         str(company.get("corp_code", ""))
@@ -1565,6 +1577,7 @@ async def dart_lookup_node(state: GraphState) -> Dict[str, Any]:
     return {
         "eligible_companies": eligible_companies,
         "search_attempts": search_attempts,
+        "dart_fetch_requested": dart_fetch_requested,
         "next_stage": "screen_startups",
         "execution_log": [*state.get("execution_log", []), message],
         "dart_rejections": rejected,

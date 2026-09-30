@@ -4,12 +4,13 @@
 
 추천 기업이 여러 곳이면 `judgement.external_market_score`가 가장 높은 추천 기업 한 곳을 SUMMARY의 최종 선정 및 상세 분석 대상으로 표시합니다. 동점이면 입력 순서를 따릅니다. 모두 보류면 최고 점수 후보를 보류 사유 설명의 대표 사례로 사용하며 최종 선정 기업은 표시하지 않습니다.
 
-LangGraph에서는 `app.py`의 `report_node`가 `build_report_payload(state)`로 GraphState를 아래 계약으로 변환한 뒤 `generate_report`를 호출합니다. 변환에 쓰는 원천 데이터는 다음과 같습니다.
+LangGraph에서는 judge 이후 `prepare_report`(`agents/report_prep.py`)가 필수 필드만 남기고 LLM으로 서술·출처를 보강한 뒤 `docs/report.md` 계약(`report_payload`)을 만듭니다. `report_node`는 이 페이로드로 PDF를 생성합니다. (`report_payload`가 없으면 `build_report_payload`로 폴백합니다.)
 
-- DART: `financial_summary`, `dart_viewer_link`, `estimated_investment_stage`
-- RAG/시장 브리지: `market`, `description`, `subdomain`
-- 경쟁사: `competitor_research` / `competition`
-- 투자 판단: `judgement` (`decision`, `reason`, `investment_reasons`, `external_market_assessment`)
+`prepare_report`가 쓰는 원천·규칙:
+
+- 포함: `company_name`, `corp_code`, `market_context.inferred.description`, `market_context.summary`(시장 규모), `ceo`, `financial_summary`(한글만, normalized 제외), `screening.stage_source`, `dart_viewer_link`/`report_nm`/`rcept_dt`, `market_context.sources`, `judgement`/`evaluation`
+- 제외: `bizr_no`, `address`, 빈 `homepage_url`, `pdf_path`, `audit_reports_count`, 중복 `latest_report`
+- 보강: AI 데이터센터 전력 인프라 관련성, 시장·기술·규제·경쟁 리스크, 창업자 기술 역량, 시장 자료 발행기관·연도·URL(파일명·메타 기반, 불완전하면 명시), 투자 판단·점수·이유·출처
 
 ```bash
 python -m pip install -r requirements-report.txt
@@ -37,9 +38,15 @@ python -m agents.report --input /path/to/report_state.json --output outputs/repo
 - `market_series`(최대 5개): `period`, `value`(0 이상 숫자), `kind`(`actual` 또는 `forecast`). 원자료의 실적·전망 구분을 그대로 사용
 - `competitors`(최대 4개): `name`, `product`, `difference`
 - `scores`(최대 6개): `criterion`, `score`, `reason`. 평가 항목별 판단 표는 4쪽에 표시합니다
-- `risks`, `unknowns`
+- `risks`: 시장·기술·규제·경쟁 리스크와 한계를 2~3문장으로 작성 (최대 420자)
 - `references`: 실제 본문에서 인용한 자료만 입력. 각 항목에 `type`(`report`, `paper`, `web`), `author`, `date`, `title`와 유형별 `url`, `site`, `journal`, `volume_pages`를 입력
 
-본문의 주요 주장에는 `[1]`처럼 출처 번호를 직접 붙이고, `references` 배열을 같은 순서로 전달합니다. 출처를 확인하지 못한 주장이나 수치를 사실처럼 쓰지 않습니다. 표 한 칸에 들어갈 판단 이유는 짧은 요약문으로 넘겨주세요. 길거나 5쪽을 넘는 입력은 조용히 생략하지 않고 오류로 알립니다.
+본문 길이(표가 아닌 서술):
+- `company.idea` 420자, `company.team` 360자
+- `market` 420자, `demand` 360자, `differentiation` 320자
+- `risks` 420자, `analysis_detail` 360자
+- SUMMARY(`summary_reasons`, `top_risk`, `next_check`)는 A4 반 페이지 높이 제한을 우선합니다.
+
+표 한 칸은 PDF에서 **한 줄·고정 폭**입니다. `prepare_report`는 `stringWidth` 기준으로 셀을 잘라 `competitors`/`scores`/`candidates`가 넘치지 않게 합니다. 길거나 5쪽을 넘는 입력은 조용히 생략하지 않고 오류로 알립니다. `unknowns`(미확인 정보)는 보고서에 넣지 않습니다.
 
 저장소에는 가상 기업·시장 수치를 담은 입력 파일을 포함하지 않습니다. 앞 에이전트의 실제 평가 결과를 JSON으로 전달하고, 실제로 인용한 자료만 `references`에 넣어 PDF를 생성합니다. 최종 제출 파일 이름은 팀 정보 확정 후 실습 지침의 `RAG-Output_{캠퍼스}-{X반}_{이름...}.pdf`로 지정합니다.
