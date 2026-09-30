@@ -56,7 +56,7 @@ flowchart TD
     G --> H[5쪽 PDF]
     F -->|목표 충족| H
 ```
-<img width="1024" height="1536" alt="SKALA_Graph" src="https://github.com/user-attachments/assets/72f941a3-7b32-4118-972f-85b4305f8c2b" />
+<img width="512" height="768" alt="SKALA_Graph" src="https://github.com/user-attachments/assets/72f941a3-7b32-4118-972f-85b4305f8c2b" />
 
 
 
