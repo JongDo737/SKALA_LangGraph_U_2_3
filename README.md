@@ -76,8 +76,9 @@ flowchart TD
 ## Usage
 
 ```bash
-cp .env.example .env          # API 키 입력
-python app.py                 # 기본 5개 기업 검색
+cp .env.example .env            # API 키 입력
+pip install -r requirements.txt # 라이브러리 설치
+python app.py                   # 기본 5개 기업 검색
 ```
 
 필수 환경변수는 `.env.example`을 따릅니다. `DART_API_KEY`, `OPENAI_API_KEY`가 필요합니다.
