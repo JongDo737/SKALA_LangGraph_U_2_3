@@ -1,1 +1,1 @@
-{company_name} 경쟁사 {detail} 에너지
+{detail} 기업

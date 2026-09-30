@@ -183,35 +183,64 @@ class PageWriter:
         rows: list[list[Any]],
         widths: list[float],
         height: float = 25,
+        wrap_cols: tuple[int, ...] = (),
     ) -> None:
-        self._fit((len(rows) + 1) * height + 18)
+        wrap_set = set(wrap_cols)
+        header_h = height
+        body_h = height
+        if wrap_set:
+            body_h = max(height, 46)
+        self._fit(header_h + len(rows) * body_h + 18)
         self.c.setFillColor(INK)
-        self.c.rect(L, self.y - height, R - L, height, fill=1, stroke=0)
+        self.c.rect(L, self.y - header_h, R - L, header_h, fill=1, stroke=0)
         for index, row in enumerate([headers, *rows]):
+            row_h = header_h if index == 0 else body_h
             if index and len(row) > 1 and row[1] == "추천":
                 self.c.setFillColor(SOFT_BLUE)
-                self.c.rect(L, self.y - height, R - L, height, fill=1, stroke=0)
+                self.c.rect(L, self.y - row_h, R - L, row_h, fill=1, stroke=0)
             x = L
-            for value, width in zip(row, widths):
+            for col, (value, width) in enumerate(zip(row, widths)):
                 original = _v(value).replace("\n", " ")
                 face = (
                     BOLD
                     if index == 0 or (index and len(row) > 1 and row[1] == "추천")
                     else FONT
                 )
-                if pdfmetrics.stringWidth(original, face, 8) > width - 12:
-                    raise ValueError(
-                        f"{self.page}쪽 표의 '{original[:24]}' 셀이 너무 깁니다. "
-                        "요약 필드를 짧게 작성하세요."
-                    )
-                self.c.setFont(face, 8)
                 self.c.setFillColor(colors.white if index == 0 else INK)
-                self.c.drawString(x + 6, self.y - 16, original)
+                if index and col in wrap_set:
+                    paragraph = Paragraph(
+                        escape(original),
+                        ParagraphStyle(
+                            "table_wrap",
+                            fontName=face,
+                            fontSize=8,
+                            leading=10.5,
+                            textColor=INK,
+                            wordWrap="CJK",
+                        ),
+                    )
+                    _, text_h = paragraph.wrap(width - 12, row_h - 8)
+                    if text_h > row_h - 8:
+                        raise ValueError(
+                            f"{self.page}쪽 표의 '{original[:24]}' 셀이 너무 깁니다. "
+                            "요약 필드를 짧게 작성하세요."
+                        )
+                    paragraph.drawOn(
+                        self.c, x + 6, self.y - 6 - text_h - (row_h - 8 - text_h) / 2
+                    )
+                else:
+                    if pdfmetrics.stringWidth(original, face, 8) > width - 12:
+                        raise ValueError(
+                            f"{self.page}쪽 표의 '{original[:24]}' 셀이 너무 깁니다. "
+                            "요약 필드를 짧게 작성하세요."
+                        )
+                    self.c.setFont(face, 8)
+                    self.c.drawString(x + 6, self.y - 16, original)
                 x += width
             if index:
                 self.c.setStrokeColor(LINE)
-                self.c.line(L, self.y - height, R, self.y - height)
-            self.y -= height
+                self.c.line(L, self.y - row_h, R, self.y - row_h)
+            self.y -= row_h
         self.y -= 18
 
     def analysis_block(self, number: int, title: str, body: str) -> None:
@@ -334,14 +363,37 @@ class PageWriter:
         self.c.save()
 
 
+def _cite_part(value: Any) -> str:
+    text = str(value or "").strip()
+    if text in {"", "확인되지 않음", "unknown", "미확인"}:
+        return ""
+    return text
+
+
 def _reference(item: dict[str, Any]) -> str:
+    """docs/report.md 참고문헌 형식.
+
+    - 기관 보고서: 발행기관(YYYY). *보고서명*. URL
+    - 학술 논문: 저자(YYYY). 논문제목. *학술지명*, 권(호), 페이지.
+    - 웹페이지: 기관명 또는 작성자(YYYY-MM-DD). *제목*. 사이트명, URL
+    """
     kind = item.get("type", "web")
-    lead = f"{_v(item.get('author'))}({_v(item.get('date'))}). {_v(item.get('title'))}."
+    author = _cite_part(item.get("author"))
+    date = _cite_part(item.get("date"))
+    title = _cite_part(item.get("title"))
+    url = _cite_part(item.get("url"))
+    site = _cite_part(item.get("site"))
+    journal = _cite_part(item.get("journal"))
+    volume_pages = _cite_part(item.get("volume_pages"))
+    lead = f"{author}({date})." if date else f"{author}."
     if kind == "paper":
-        return f"{lead} {_v(item.get('journal'))}, {_v(item.get('volume_pages'))}."
+        tail = f"*{journal}*" if journal else ""
+        if volume_pages:
+            tail = f"{tail}, {volume_pages}" if tail else volume_pages
+        return " ".join(part for part in (lead, f"{title}.", f"{tail}." if tail else "") if part)
     if kind == "report":
-        return f"{lead} {_v(item.get('url'))}"
-    return f"{lead} {_v(item.get('site'))}, {_v(item.get('url'))}"
+        return " ".join(part for part in (lead, f"*{title}*.", url) if part)
+    return " ".join(part for part in (lead, f"*{title}*.", f"{site}," if site else "", url) if part)
 
 
 def _company_name(company: dict[str, Any]) -> str:
@@ -518,7 +570,7 @@ def _references_from_state(
                 {
                     "type": "report",
                     "author": "DART",
-                    "date": "",
+                    "date": str((company.get("dart") or {}).get("rcept_dt") or "")[:4],
                     "title": f"{_company_name(company)} 감사보고서",
                     "url": link,
                 }
@@ -535,7 +587,7 @@ def _references_from_state(
                     "author": "웹 검색",
                     "date": "",
                     "title": f"{_company_name(company)} 투자 라운드 근거",
-                    "site": "web",
+                    "site": "웹페이지",
                     "url": source,
                 }
             )
@@ -826,8 +878,13 @@ def generate_report(
     p.c.setStrokeColor(LINE)
     p.c.line(side_x - 15, notes_top, side_x - 15, left_y)
     metric_height = (notes_top - left_y) / 3
+    reviewed = state.get("reviewed_count")
+    try:
+        reviewed_n = int(reviewed) if reviewed is not None else len(candidates)
+    except (TypeError, ValueError):
+        reviewed_n = len(candidates)
     for index, (label, value) in enumerate(
-        (("검토", len(candidates)), ("추천", recommended), ("보류", held))
+        (("검토", reviewed_n), ("추천", recommended), ("보류", held))
     ):
         y = notes_top - index * metric_height
         p.c.setFillColor(MUTED)
@@ -846,58 +903,71 @@ def generate_report(
     p.c.line(L, bottom, R, bottom)
 
     p.start("01  종합 분석", "")
-    points = state.get("analysis_points", [])
-    if points:
-        for i, point in enumerate(points, 1):
-            p.analysis_block(i, _v(point.get("title")), _v(point.get("body")))
-        p.y -= 12
+    fin_table = state.get("financial_statement_table")
+    has_fin = isinstance(fin_table, dict) and fin_table.get("rows")
+    if has_fin:
+        p.heading(_v(fin_table.get("title") or "1순위 핵심 재무제표"), 6)
+        headers = list(fin_table.get("headers") or ["항목", "금액"])
+        rows = [
+            list(row) for row in (fin_table.get("rows") or []) if isinstance(row, list)
+        ][:6]
+        widths = list(fin_table.get("widths") or [])
+        if len(widths) != len(headers):
+            first = 120
+            rest = (R - L - first) / max(len(headers) - 1, 1)
+            widths = [first] + [rest] * (len(headers) - 1)
+        p.table(headers, rows, widths, 20)
     else:
-        p.heading("종합 분석")
-        p.text(
-            state.get(
-                "analysis_detail",
-                "[사업·기술·시장·사업화 근거를 연결한 종합 분석 입력 대기]",
-            )
-        )
+        analysis_detail = state.get("analysis_detail")
+        points = state.get("analysis_points", [])
+        if points:
+            for i, point in enumerate(points[:2], 1):
+                p.analysis_block(i, _v(point.get("title")), _v(point.get("body")))
+            p.y -= 8
+        elif analysis_detail:
+            p.heading("종합 판단", 6)
+            p.text(analysis_detail, 9, gap=10)
     if decision == "recommend":
-        p.heading("기업 핵심 정보")
-        p.field("기업", company.get("name"))
-        p.field("고객 문제", company.get("problem", "[자료 입력 대기]"))
-        p.field(
-            "사업·기술",
-            company.get("technology") or company.get("idea") or "[자료 입력 대기]",
+        p.heading("사업 아이디어", 6)
+        p.text(
+            company.get("idea") or company.get("problem") or "-",
+            9,
+            gap=10,
         )
-        p.field("팀", company.get("team", "[자료 입력 대기]"))
-        p.heading("사업화 근거")
-        p.text(company.get("customers_revenue", "[고객·수익 방식 입력 대기]"))
-        p.text(company.get("traction", "[실증·계약 입력 대기]"))
+        p.heading("팀 구성", 6)
+        p.text(company.get("team", "-"), 9, gap=10)
+        if not has_fin and state.get("analysis_detail"):
+            p.heading("선정 요지", 6)
+            p.text(state.get("analysis_detail"), 9, gap=10)
     else:
-        p.heading("공통 보류 사유")
-        p.text(state.get("hold_overview", "[전부 보류 사유 입력 대기]"))
-        p.heading("추가 검증 사항")
-        p.text(state.get("missing_evidence", "[검증이 필요한 정보 입력 대기]"))
+        p.heading("공통 보류 사유", 6)
+        p.text(state.get("hold_overview", "-"), 9)
+        p.heading("추가 검증 사항", 6)
+        p.text(state.get("missing_evidence", "-"), 9)
     if len(candidates) > 5:
-        p.heading("주요 리스크 · 한계")
-        p.text(state.get("risks", "[사업·기술·규제·경쟁 리스크 입력 대기]"), 9)
+        p.heading("사업 리스크 · 한계", 6)
+        p.text(state.get("risks", "-"), 9)
 
     p.start("02  시장 · 경쟁", "")
     competitors = state.get("competitors", [])
     market_series = state.get("market_series", [])
     dense_market = len(market_series) >= 4 and len(competitors) >= 3
     market_heading_gap = 5 if dense_market else 11
-    p.heading("시장 지표", market_heading_gap)
-    p.market_chart(
-        state.get("market_metric_label", ""),
-        state.get("market_metric_unit", ""),
-        market_series,
-        state.get("market_metric_source", ""),
-        state.get("market_chart_takeaway", ""),
-        25 if dense_market else 31,
-    )
-    p.heading("시장 수치가 뜻하는 것", market_heading_gap)
-    market_text_gap = 14 if dense_market else 17
-    p.text(state.get("market", "[시장 규모·성장 근거 입력 대기]"), gap=market_text_gap)
-    p.text(state.get("demand", "[수요 요인 입력 대기]"), gap=market_text_gap)
+    if market_series:
+        p.heading("시장 지표", market_heading_gap)
+        p.market_chart(
+            state.get("market_metric_label", ""),
+            state.get("market_metric_unit", ""),
+            market_series,
+            state.get("market_metric_source", ""),
+            state.get("market_chart_takeaway", ""),
+            25 if dense_market else 31,
+        )
+    p.heading("시장 규모", market_heading_gap)
+    market_text_gap = 12 if dense_market else 14
+    p.text(state.get("market", "-"), 9, gap=market_text_gap)
+    p.heading("수요 근거", market_heading_gap)
+    p.text(state.get("demand", "-"), 9, gap=market_text_gap)
     p.heading("경쟁사 비교", market_heading_gap)
     if competitors:
         p.table(
@@ -910,9 +980,9 @@ def generate_report(
             30 if dense_market else 35,
         )
     else:
-        p.text("[동일 기준으로 비교한 경쟁사 정보 입력 대기]")
+        p.text("동일 기준 경쟁사 비교 자료가 부족합니다.")
     p.heading("차별성 판단", market_heading_gap)
-    p.text(state.get("differentiation", "[검증된 차별점 입력 대기]"), gap=market_text_gap)
+    p.text(state.get("differentiation", "-"), 9, gap=market_text_gap)
 
     p.start("03  투자 판단 · 리스크", "")
     p.heading("평가 기준별 판단")
@@ -925,19 +995,18 @@ def generate_report(
             27,
         )
     else:
-        p.text("[평가 항목별 점수·판단 근거 입력 대기]")
+        p.text("평가 항목별 점수 자료가 부족합니다.")
     p.heading("평가 후보 요약")
     p.table(
         ["기업", "판단", "주요 이유"],
         [[x.get("name"), x.get("decision"), x.get("reason")] for x in candidates],
         [115, 65, R - L - 180],
-        23 if len(candidates) <= 5 else 20,
+        28 if len(candidates) <= 5 else 24,
+        wrap_cols=(2,),
     )
     if len(candidates) <= 5:
-        p.heading("주요 리스크 · 한계")
-        p.text(state.get("risks", "[사업·기술·규제·경쟁 리스크 입력 대기]"), 9)
-    p.heading("미확인 정보")
-    p.text(state.get("unknowns", "[근거가 부족한 항목 입력 대기]"), 9)
+        p.heading("사업 리스크 · 한계")
+        p.text(state.get("risks", "-"), 9)
 
     p.start("REFERENCE", "본문의 판단과 수치에 실제로 사용한 자료")
     references = state.get("references", [])

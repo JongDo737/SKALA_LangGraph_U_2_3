@@ -3,10 +3,13 @@
 # LangGraph / LLM
 langchain-teddynote
 langgraph
+langchain-openai
+langchain-core
 openai>=1.50.0
 python-dotenv>=1.0.0
 pydantic
 requests>=2.32.0
+aiohttp>=3.10.0
 
 # DART / PDF 재무 추출
 pdfplumber

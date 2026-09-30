@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from agents.embed import ensure_vector_db
 from agents.judge import judgement_node
 from agents.market_bridge import enrich_company_for_competition, market_bridge_node
 from agents.report import build_report_payload, generate_report
+from agents.report_prep import prepare_report_node, sanitize_report_payload
 from agents.startup_screen import screen_startups_node
 from config import DEFAULT_COMPANY_COUNT, DEFAULT_MAX_SEARCH_ATTEMPTS, DEFAULT_WACC
 from state import GraphState
@@ -43,6 +45,7 @@ NODE_LABELS: dict[str, str] = {
     "market_research": "시장성 조사 (RAG)",
     "compare_competition": "경쟁사 조사",
     "judge_investment": "투자 적합 판단",
+    "prepare_report": "보고서 데이터 준비",
     "generate_report": "투자 보고서 생성",
     "selection_failed": "기업 선정 실패 종료",
 }
@@ -66,18 +69,55 @@ def _print_node_result(
 
 
 def save_final_companies(state: GraphState, *, tag: str = "judge") -> Path:
-    """judge 이후 최종 선정 기업 State를 outputs/ 에 JSON으로 저장합니다."""
+    """judge 이후 최종 선정 기업 State를 outputs/ 에 JSON으로 저장합니다.
+
+    ``eligible_companies``의 기존 DART·시장·재무 필드는 그대로 두고,
+    각 기업에 ``evaluation`` 요약(적합/점수/경쟁사)만 추가합니다.
+    별도 ``final_suitable_companies`` / ``company_evaluations`` 리스트도 함께 저장합니다.
+    """
+
+    from copy import deepcopy
+
+    from agents.judge import (
+        build_company_evaluation_list,
+        build_final_suitable_companies,
+        build_company_evaluation_summary,
+    )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    companies = list(state.get("eligible_companies") or [])
+    companies = [deepcopy(c) for c in (state.get("eligible_companies") or [])]
+    evaluations = list(state.get("company_evaluations") or [])
+    if not evaluations:
+        evaluations = build_company_evaluation_list(companies)
+
+    # 원본 필드를 지우지 않고 evaluation 블록만 붙입니다.
+    eval_by_name = {
+        str(row.get("company_name") or "").casefold(): row for row in evaluations
+    }
+    for company in companies:
+        name = str(company.get("name") or company.get("company_name") or "").casefold()
+        summary = eval_by_name.get(name) or build_company_evaluation_summary(company)
+        company["evaluation"] = summary
+
+    final_suitable = list(state.get("final_suitable_companies") or [])
+    if not final_suitable:
+        final_suitable = build_final_suitable_companies(companies)
+
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     payload = {
         "saved_at": datetime.now().isoformat(timespec="seconds"),
         "tag": tag,
         "target_company_count": state.get("target_company_count"),
         "company_count": len(companies),
+        "suitable_count": len(final_suitable),
         "wacc": state.get("wacc"),
+        "dart_fetch_requested": state.get("dart_fetch_requested"),
+        "dart_seen_corp_codes": list(state.get("dart_seen_corp_codes") or []),
+        # 전체 State 기업 객체 (재무·공시·시장 + evaluation 추가)
         "eligible_companies": companies,
+        # report 직전 핸드오프용 요약 리스트 (원본을 대체하지 않음)
+        "final_suitable_companies": final_suitable,
+        "company_evaluations": evaluations,
         "judgement_rejections": list(state.get("judgement_rejections") or []),
     }
     path = OUTPUT_DIR / f"final_companies_{stamp}.json"
@@ -85,7 +125,9 @@ def save_final_companies(state: GraphState, *, tag: str = "judge") -> Path:
     text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
     path.write_text(text, encoding="utf-8")
     latest.write_text(text, encoding="utf-8")
-    print(f"  [저장] 최종 선정 기업 {len(companies)}개 → {path}")
+    print(
+        f"  [저장] 기업 원본 {len(companies)}개 유지 + 적합 요약 {len(final_suitable)}개 → {path}"
+    )
     print(f"  [저장] 최신본 → {latest}")
     return path
 
@@ -223,13 +265,38 @@ def report_node(state: GraphState) -> dict[str, Any]:
     """docs/report.md 계약으로 State를 변환한 뒤 PDF 보고서를 생성합니다."""
 
     companies = list(state.get("eligible_companies", []))
-    # judge 이후 최종 선정 기업 데이터를 outputs/ 에 먼저 저장 (PDF 실패와 무관)
+    final_suitable = list(state.get("final_suitable_companies") or [])
+    # judge 이후 최종 선정 기업 데이터를 outputs/ 에 먼저 저장 (PDF·LLM 요약 전)
     try:
         save_final_companies(state, tag="after_judge")
     except Exception as error:
         print(f"  [저장 실패] 최종 기업 JSON 저장 오류: {error}")
 
-    report_payload = build_report_payload(state)
+    print("\n[작업] 투자 보고서 생성 준비")
+    print(
+        f"  최종 적합 리스트: "
+        f"{[row.get('company_name') for row in final_suitable] or _company_names(companies)}"
+    )
+    for index, row in enumerate(final_suitable or [], 1):
+        print(
+            f"  [{index}] {row.get('company_name')} | "
+            f"{row.get('decision')} | score={row.get('external_market_score')} | "
+            f"경쟁사={(row.get('competitor_research') or {}).get('found_competitor_count')}"
+        )
+
+    # prepare_report 노드가 이미 report.md 계약을 채워 둔 경우 재사용
+    report_payload = state.get("report_payload")
+    if not isinstance(report_payload, dict) or not report_payload.get("candidates"):
+        print("  [보고서] report_payload 없음 → build_report_payload로 변환")
+        report_payload = build_report_payload(state)
+    else:
+        print(
+            "  [보고서] prepare_report 결과 사용 "
+            f"(decision={report_payload.get('decision')}, "
+            f"candidates={len(report_payload.get('candidates') or [])})"
+        )
+    # PDF 표 셀 폭 제한을 최종 한 번 더 강제
+    report_payload = sanitize_report_payload(report_payload)
     output_path = PROJECT_ROOT / "outputs" / "investment_report.pdf"
     try:
         path = generate_report(report_payload, output_path)
@@ -252,6 +319,10 @@ def report_node(state: GraphState) -> dict[str, Any]:
     )
     return {
         "evaluated_companies": companies,
+        "final_suitable_companies": final_suitable
+        or state.get("final_suitable_companies")
+        or [],
+        "company_evaluations": list(state.get("company_evaluations") or []),
         "report_payload": report_payload,
         "status": status,
         "report_path": str(path),
@@ -325,11 +396,24 @@ def route_by_company_count(
             "max_search_attempts",
             DEFAULT_MAX_SEARCH_ATTEMPTS,
         ):
+            if selected_count <= 0:
+                print(
+                    "  [다음 단계] 목표 기업 수 부족 + 최대 탐색 횟수 초과 "
+                    f"→ {_node_label('selection_failed')}"
+                )
+                return "selection_failed"
+            next_stage = state.get("next_stage", "market_research")
+            if next_stage in {"generate_report", "prepare_report"}:
+                print(
+                    f"  [다음 단계] {selected_count}/{target_count}개로 부족하지만 "
+                    "탐색 횟수 초과 → 지금까지 적합한 기업으로 보고서 작성"
+                )
+                return "prepare_report"
             print(
-                "  [다음 단계] 목표 기업 수 부족 + 최대 탐색 횟수 초과 "
-                f"→ {_node_label('selection_failed')}"
+                f"  [다음 단계] {selected_count}/{target_count}개로 부족하지만 "
+                f"탐색 횟수 초과 → 추가 조회 없이 현재 기업으로 {_node_label(next_stage)}"
             )
-            return "selection_failed"
+            return next_stage
         print(
             f"  [다음 단계] {selected_count}/{target_count}개로 부족 "
             f"→ {_node_label('lookup_dart')} 재탐색"
@@ -371,10 +455,13 @@ def build_workflow():
     # 6. 투자 판단 노드
     builder.add_node("judge_investment", judgement_node)
 
-    # 7. 보고서 생성 노드
+    # 7. 보고서 데이터 준비 노드 (필수 필드 정제 + LLM 보강 → report.md 계약)
+    builder.add_node("prepare_report", prepare_report_node)
+
+    # 8. 보고서 생성 노드
     builder.add_node("generate_report", report_node)
 
-    # 8. 기업 선택 실패 노드
+    # 9. 기업 선택 실패 노드
     builder.add_node("selection_failed", selection_failed_node)
 
     # -----------------------------------------------------------------------
@@ -393,7 +480,7 @@ def build_workflow():
     # 기업 수 검증 후 조건 분기
     # - 목표보다 적음: lookup_dart로 돌아가 부족한 기업을 추가 탐색
     # - 목표 충족: 직전 노드가 State의 next_stage에 지정한 단계로 이동
-    # - 최대 탐색 횟수 초과: selection_failed로 이동
+    # - 최대 탐색 횟수 초과: 적합 기업이 있으면 그 데이터로 보고서, 없으면 selection_failed
     builder.add_conditional_edges(
         "validate_company_count",
         route_by_company_count,
@@ -403,11 +490,14 @@ def build_workflow():
             "market_research": "market_research",
             "compare_competition": "compare_competition",
             "judge_investment": "judge_investment",
-            "generate_report": "generate_report",
+            # judge가 next_stage=generate_report 로 넘기면 준비 노드를 먼저 실행
+            "generate_report": "prepare_report",
+            "prepare_report": "prepare_report",
             "selection_failed": "selection_failed",
         },
     )
 
+    builder.add_edge("prepare_report", "generate_report")
     builder.add_edge("generate_report", END)
     builder.add_edge("selection_failed", END)
 
@@ -602,9 +692,18 @@ def create_report_only_state(
             raise ValueError(
                 "JSON에 eligible_companies 배열이 있거나, 기업 배열 자체여야 합니다."
             )
-        state["eligible_companies"] = companies[:company_count] or companies
+        state["eligible_companies"] = companies
+        state["target_company_count"] = max(len(companies), 1)
+        if company_count and company_count < len(companies):
+            # 명시적으로 줄이고 싶을 때만 --company-count 적용
+            state["eligible_companies"] = companies[:company_count]
+            state["target_company_count"] = company_count
         if payload.get("wacc") is not None:
             state["wacc"] = payload["wacc"]
+        if payload.get("dart_fetch_requested") is not None:
+            state["dart_fetch_requested"] = payload["dart_fetch_requested"]
+        if payload.get("dart_seen_corp_codes"):
+            state["dart_seen_corp_codes"] = list(payload["dart_seen_corp_codes"])
         if payload.get("judgement_payload"):
             state["judgement_payload"] = payload["judgement_payload"]
         if payload.get("competition_payload"):
@@ -616,10 +715,10 @@ def create_report_only_state(
     state["market_attempts"] = 1
     state["competition_attempts"] = 1
     state["judgement_attempts"] = 1
-    state["next_stage"] = "generate_report"
+    state["next_stage"] = "prepare_report"
     state["status"] = "evaluating"
     state["execution_log"] = [
-        "report-only 모드: judge 이전 단계를 건너뛰고 보고서만 생성합니다."
+        "report-only 모드: judge 이전 단계를 건너뛰고 보고서 준비·생성만 수행합니다."
     ]
     return state
 
@@ -637,13 +736,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report-only",
         action="store_true",
-        help="DART~judge를 건너뛰고 최종 State 형식 fixture로 report만 생성합니다.",
+        help=(
+            "DART~judge를 건너뛰고 prepare_report→PDF만 실행합니다. "
+            "기본 입력은 outputs/final_companies_latest.json 입니다."
+        ),
     )
     parser.add_argument(
         "--report-input",
         type=Path,
         default=None,
-        help="report-only 모드에서 사용할 JSON State 경로 (eligible_companies 포함)",
+        help=(
+            "report-only 입력 JSON (미지정 시 outputs/final_companies_latest.json). "
+            "python -m agents.report_prep --input ... 와 동일 경로를 쓸 수 있습니다."
+        ),
+    )
+    parser.add_argument(
+        "--no-report-llm",
+        action="store_true",
+        help="report-only에서 LLM 보강을 끄고 빠르게 PDF만 검증합니다.",
     )
     parser.add_argument(
         "--rebuild-embed",
@@ -664,20 +774,45 @@ def main() -> None:
     args = parse_args()
 
     if args.report_only:
+        report_input = args.report_input or (
+            PROJECT_ROOT / "outputs" / "final_companies_latest.json"
+        )
+        if args.report_input is None and report_input.is_file():
+            print(f"  [report-only] 기본 입력 사용: {report_input}")
+        elif args.report_input is None and not report_input.is_file():
+            report_input = None
+            print("  [report-only] latest.json 없음 → 내장 fixture 사용")
+
+        if args.no_report_llm:
+            os.environ["REPORT_PREP_USE_LLM"] = "0"
+
         state = create_report_only_state(
             args.company_count,
-            input_path=args.report_input,
+            input_path=report_input,
         )
+        # latest.json 기업 수를 그대로 쓰도록 company_count로 자르지 않음
+        if report_input is not None and state.get("eligible_companies"):
+            # create_report_only_state가 company_count로 자를 수 있어 원본 유지
+            payload = json.loads(Path(report_input).read_text(encoding="utf-8"))
+            companies = payload.get("eligible_companies") or []
+            if isinstance(companies, list) and companies:
+                state["eligible_companies"] = companies
+                state["target_company_count"] = len(companies)
+
         print("=" * 70)
-        print("report-only 모드 - judge 건너뛰고 보고서만 생성")
+        print("report-only 모드 - judge 건너뛰고 보고서 준비·생성")
         print(f"기업 수           : {len(state.get('eligible_companies', []))}")
-        print(f"입력 JSON         : {args.report_input or '(내장 fixture)'}")
+        print(f"입력 JSON         : {report_input or '(내장 fixture)'}")
+        print(f"LLM 보강          : {'꺼짐' if args.no_report_llm else '켜짐'}")
         print(f"로그 파일         : {log_path}")
         print("=" * 70)
+        prepared = prepare_report_node(state)
+        state = {**state, **prepared}
         result = report_node(state)
         print("\n" + "=" * 70)
         print("최종 State (report-only)")
         print(f"  실행 상태       : {result.get('status')}")
+        print(f"  준비 상태       : {prepared.get('report_prep_status')}")
         print(f"  선택된 기업 수  : {len(state.get('eligible_companies', []))}")
         print(f"  보고서 전달 기업: {len(result.get('evaluated_companies', []))}")
         print(f"  보고서 경로     : {result.get('report_path', '생성 안 됨')}")

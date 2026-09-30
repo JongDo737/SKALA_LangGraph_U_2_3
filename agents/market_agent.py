@@ -49,7 +49,9 @@ PROJECT_ROOT = AGENTS_DIR.parent
 BASE_DIR = PROJECT_ROOT  # 하위 호환 별칭
 DB_DIR = PROJECT_ROOT / "chroma_db"
 INPUT_DIR = PROJECT_ROOT / "data" / "input"  # 단독 실행용 JSON 입력
-KSIC_CACHE = PROJECT_ROOT / "data" / "ksic_cache.json"  # 업종코드 → 업종명 조회 결과 캐시
+KSIC_CACHE = (
+    PROJECT_ROOT / "data" / "ksic_cache.json"
+)  # 업종코드 → 업종명 조회 결과 캐시
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output"  # 단독 실행용 JSON 출력
 COLLECTION_NAME = "rag_documents"
 MODEL_NAME = "BAAI/bge-m3"
@@ -58,26 +60,47 @@ MODEL_NAME = "BAAI/bge-m3"
 MAX_DISTANCE = 0.4
 TOP_K = 4  # 요약에 쓸 RAG 청크 수 (가까운 순)
 MIN_HITS = 1  # 기준 이내 청크가 이만큼 미만이면 웹 검색으로 대체
-MIN_QUERY_WORDS = 2  # 질의를 줄일 때 남기는 최소 단어 수 (너무 짧으면 엉뚱한 문서에 걸린다)
+MIN_QUERY_WORDS = (
+    2  # 질의를 줄일 때 남기는 최소 단어 수 (너무 짧으면 엉뚱한 문서에 걸린다)
+)
 WEB_MAX_RESULTS = 3  # 요약에 쓸 웹 검색 결과 수
 LLM_MODEL = "gpt-4.1-mini"  # 환경변수 MARKET_LLM_MODEL 로 변경 가능
 MAX_CONTEXT_CHARS = 1500  # 자료 1건당 LLM 에 넣는 최대 글자 수
 MAX_WORKERS = 5  # 기업을 동시에 처리하는 수 (LLM·웹 검색 호출을 병렬로)
 WEB_RETRIES = 3  # 웹 검색이 일시적으로 실패할 때 재시도 횟수
-DDG_MIN_INTERVAL = 1.0  # 초. DuckDuckGo 는 동시 요청이 몰리면 차단되므로 호출 간격을 둔다
+DDG_MIN_INTERVAL = (
+    1.0  # 초. DuckDuckGo 는 동시 요청이 몰리면 차단되므로 호출 간격을 둔다
+)
 WEB_DOMAIN = "researchnester.com"  # 웹 검색은 Research Nester 시장 보고서로 한정
 
 # 입력 JSON 의 필드명이 확정되지 않아 흔한 이름들을 앞에서부터 찾는다.
 NAME_FIELDS = ("name", "company", "company_name", "기업명", "회사명", "회사")
 TOPIC_FIELDS = (
-    "sector", "sub_domain", "세부분야", "분야", "category", "industry",
-    "description", "one_liner", "business", "summary", "intro",
+    "sector",
+    "sub_domain",
+    "세부분야",
+    "분야",
+    "category",
+    "industry",
+    "description",
+    "one_liner",
+    "business",
+    "summary",
+    "intro",
     "inferred_topic",  # 분야 필드가 없을 때 LLM 이 회사명·업종코드 등으로 추정한 값 (run 에서 채운다)
 )
 MAX_TOPIC_WORDS = 15  # 소개문처럼 긴 텍스트는 첫 문장에서 이 단어 수까지만 쓴다
 # "○○는 XX 분야에서 '과제명'을 전개하는 기업입니다." 형태에서 과제명을 뽑는다.
 TITLE_PATTERN = re.compile(r"분야에서\s*['‘“\"](.+?)['’”\"]")
-LIST_KEYS = ("eligible_companies", "candidates", "startups", "companies", "results", "items", "data")
+LIST_KEYS = (
+    "eligible_companies",
+    "candidates",
+    "startups",
+    "companies",
+    "results",
+    "items",
+    "data",
+)
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -111,7 +134,8 @@ def get_topic(company):
 
 def read_input(path):
     """JSON 파일을 읽어 (원본 데이터, 기업 목록이 든 키, 기업 목록)을 돌려준다.
-    {"eligible_companies": [...], ...} 같은 상태 JSON 이면 key 가 그 이름이고, 리스트/기업 1개 dict 이면 key 는 None."""
+    {"eligible_companies": [...], ...} 같은 상태 JSON 이면 key 가 그 이름이고, 리스트/기업 1개 dict 이면 key 는 None.
+    """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     key = None
 
@@ -221,7 +245,9 @@ def web_search(query):
         except requests.RequestException as error:
             errors.append(f"Tavily 실패: {error}")
 
-    for attempt in range(WEB_RETRIES):  # DuckDuckGo 가 간헐적으로 "결과 없음"을 주므로 재시도한다
+    for attempt in range(
+        WEB_RETRIES
+    ):  # DuckDuckGo 가 간헐적으로 "결과 없음"을 주므로 재시도한다
         try:
             items = ddg_search(query)
             if items:
@@ -236,10 +262,16 @@ def web_search(query):
 
 
 class MarketSummary(BaseModel):
-    target_market: str | None = Field(description="수치가 가리키는 시장(지역 포함). 예: 글로벌 데이터센터 냉각 시장")
+    target_market: str | None = Field(
+        description="수치가 가리키는 시장(지역 포함). 예: 글로벌 데이터센터 냉각 시장"
+    )
     market_size: str | None = Field(description="시장 규모. 연도와 단위를 포함한 수치")
-    growth: str | None = Field(description="성장성. 성장률(CAGR 등)과 기간, 빠르게 크는 세부 부문")
-    demand_evidence: str | None = Field(description="수요 근거. 시장이 커지는 이유와 수요 요인")
+    growth: str | None = Field(
+        description="성장성. 성장률(CAGR 등)과 기간, 빠르게 크는 세부 부문"
+    )
+    demand_evidence: str | None = Field(
+        description="수요 근거. 시장이 커지는 이유와 수요 요인"
+    )
 
 
 SUMMARY_SYSTEM = """너는 시장 조사 자료를 정리하는 애널리스트다. 주어진 [자료]에 적힌 내용만 사용해서 항목을 채운다.
@@ -250,7 +282,10 @@ SUMMARY_SYSTEM = """너는 시장 조사 자료를 정리하는 애널리스트�
 - 한국어로 간결하게 쓴다. 각 항목은 1~2문장 이내."""
 
 
-SIZE_PATTERN = re.compile(r"\d[\d,.]*\s*(억|조|만|천|백만|십억|달러|원|billion|million|trillion|USD|[TGM]W)|[$￦₩]\s*\d", re.I)
+SIZE_PATTERN = re.compile(
+    r"\d[\d,.]*\s*(억|조|만|천|백만|십억|달러|원|billion|million|trillion|USD|[TGM]W)|[$￦₩]\s*\d",
+    re.I,
+)
 GROWTH_PATTERN = re.compile(r"\d[\d,.]*\s*(%|퍼센트|배)")
 
 
@@ -291,10 +326,18 @@ def has_content(summary):
 
 
 class TopicGuess(BaseModel):
-    topic: str | None = Field(description="시장 조사 검색어로 쓸 사업 분야. 한국어 명사구 2~5단어. 근거가 부족하면 null")
-    subdomain: str | None = Field(description="영문 소분류 라벨. 예: 'solar / PV', 'immersion cooling', 'waste treatment'")
-    country: str | None = Field(description="본사 소재국 ISO 2자리 코드. 주소가 한국이면 KR")
-    description: str | None = Field(description="이 기업이 무엇을 하는 회사인지 한국어 1~2문장. 사업 분야 수준으로만 쓰고 제품명·실적 등 자료에 없는 세부는 지어내지 않는다")
+    topic: str | None = Field(
+        description="시장 조사 검색어로 쓸 사업 분야. 한국어 명사구 2~5단어. 근거가 부족하면 null"
+    )
+    subdomain: str | None = Field(
+        description="영문 소분류 라벨. 예: 'solar / PV', 'immersion cooling', 'waste treatment'"
+    )
+    country: str | None = Field(
+        description="본사 소재국 ISO 2자리 코드. 주소가 한국이면 KR"
+    )
+    description: str | None = Field(
+        description="이 기업이 무엇을 하는 회사인지 한국어 1~2문장. 사업 분야 수준으로만 쓰고 제품명·실적 등 자료에 없는 세부는 지어내지 않는다"
+    )
     basis: str = Field(description="추정 근거 한 줄")
 
 
@@ -330,11 +373,19 @@ def ksic_name(code):
 
     patterns = (
         re.compile(rf"(?<!\d){code}(?!\d)\s*\(([^)]+)\)"),  # 74211 (건축물 일반 청소업)
-        re.compile(rf"(?<!\d){code}(?!\d)\s*[:\-]?\s*([가-힣][가-힣 ·,]{{1,25}}업)"),  # 3511 발전업
+        re.compile(
+            rf"(?<!\d){code}(?!\d)\s*[:\-]?\s*([가-힣][가-힣 ·,]{{1,25}}업)"
+        ),  # 3511 발전업
     )
-    queries = (f"한국표준산업분류 {code} 세세분류 업종", f"표준산업분류 {code}", f"KSIC {code}")
+    queries = (
+        f"한국표준산업분류 {code} 세세분류 업종",
+        f"표준산업분류 {code}",
+        f"KSIC {code}",
+    )
 
-    for attempt in range(2):  # DuckDuckGo 가 간헐적으로 빈 결과를 주므로 한 번 더 시도한다
+    for attempt in range(
+        2
+    ):  # DuckDuckGo 가 간헐적으로 빈 결과를 주므로 한 번 더 시도한다
         for query in queries:
             try:
                 results = ddg_text(query, 5)
@@ -354,7 +405,8 @@ def ksic_name(code):
                             cache = read_ksic_cache()
                             cache[code] = name
                             KSIC_CACHE.write_text(
-                                json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
+                                json.dumps(cache, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
                             )
 
                         return name
@@ -371,7 +423,10 @@ def describe_company(company):
     for key, value in company.items():
         if "industry" in key.lower() and isinstance(value, (str, int)):
             name = ksic_name(value) if str(value).strip().isdigit() else None
-            lines.append(f"업종코드 {value}: " + (f"업종명 '{name}'" if name else "업종명 조회 실패(코드 뜻 모름)"))
+            lines.append(
+                f"업종코드 {value}: "
+                + (f"업종명 '{name}'" if name else "업종명 조회 실패(코드 뜻 모름)")
+            )
 
     if company.get("address"):
         lines.append(f"주소: {company['address']}")
@@ -420,7 +475,8 @@ def check_relevance(client, model, topic, sub_domains):
             {"role": "system", "content": RELEVANCE_SYSTEM},
             {
                 "role": "user",
-                "content": f"기업의 사업 분야: {topic}\n후보 문서 분야:\n" + "\n".join(f"- {name}" for name in sub_domains),
+                "content": f"기업의 사업 분야: {topic}\n후보 문서 분야:\n"
+                + "\n".join(f"- {name}" for name in sub_domains),
             },
         ],
         response_format=RelevanceCheck,
@@ -439,7 +495,13 @@ class MarketAgent:
 
         self.llm = OpenAI()
         self.llm_model = os.getenv("MARKET_LLM_MODEL", LLM_MODEL)
+        print("[rag] BGE-M3 임베딩 모델을 로딩합니다...")
+        print(
+            "  (Loading weights 100% 이후에도 초기화에 약 20초 내외 걸릴 수 있습니다. "
+            "잠시만 기다려 주세요.)"
+        )
         self.model = SentenceTransformer(MODEL_NAME)
+        print("[rag] BGE-M3 모델 로딩 완료. 20초 내외 소요 예정입니다.")
         self.collection = chromadb.PersistentClient(path=str(db_dir)).get_collection(
             COLLECTION_NAME
         )
@@ -502,9 +564,11 @@ class MarketAgent:
         try:
             # RAG 자료는 문서의 세부 분야를 함께 알려줘서, 기업 분야와 다른 시장 자료를 구분해 정리하게 한다
             texts = [
-                f"(문서 분야: {item['sub_domain']}, 유형: {item['doc_type']})\n{item['text']}"
-                if item.get("sub_domain")
-                else item["text"]
+                (
+                    f"(문서 분야: {item['sub_domain']}, 유형: {item['doc_type']})\n{item['text']}"
+                    if item.get("sub_domain")
+                    else item["text"]
+                )
                 for item in items
             ]
             summary = summarize(self.llm, self.llm_model, get_topic(company), texts)
@@ -528,7 +592,11 @@ class MarketAgent:
         else:
             sources = [{"title": item["title"], "url": item["url"]} for item in items]
 
-        return {"source": source, "summary": summary.model_dump(), "sources": sources}, None
+        return {
+            "source": source,
+            "summary": summary.model_dump(),
+            "sources": sources,
+        }, None
 
     def prepare(self, company):
         """분야 필드가 없으면 LLM 으로 추정해서 검색용 dict 와 추정 정보를 만든다."""
@@ -556,13 +624,17 @@ class MarketAgent:
     def filter_relevant(self, work, hits):
         """RAG 청크 중 문서 분야가 기업 분야와 다른 기술·시장인 것을 걸러낸다. (걸러진 분야는 함께 돌려준다)
         판별에 실패하면 걸러내지 않고 그대로 쓴다."""
-        sub_domains = sorted({hit["sub_domain"] for hit in hits if hit.get("sub_domain")})
+        sub_domains = sorted(
+            {hit["sub_domain"] for hit in hits if hit.get("sub_domain")}
+        )
 
         if not sub_domains:
             return hits, []
 
         try:
-            matching = check_relevance(self.llm, self.llm_model, get_topic(work), sub_domains)
+            matching = check_relevance(
+                self.llm, self.llm_model, get_topic(work), sub_domains
+            )
         except Exception:
             return hits, []
 
@@ -585,7 +657,9 @@ class MarketAgent:
                 if hits:
                     context, error = self.summarize_context(work, "rag", hits)
 
-                if context is None:  # RAG 에 없거나, 있어도 분야와 무관해서 정리할 내용이 없으면 웹으로
+                if (
+                    context is None
+                ):  # RAG 에 없거나, 있어도 분야와 무관해서 정리할 내용이 없으면 웹으로
                     for query in web_queries(work):
                         items, search_error = web_search(query)
                         if items:
@@ -620,7 +694,9 @@ class MarketAgent:
                     lambda args: self.process(*args),
                     [
                         (company, work, inferred, hits)
-                        for company, (work, inferred), hits in zip(companies, prepared, rag_hits)
+                        for company, (work, inferred), hits in zip(
+                            companies, prepared, rag_hits
+                        )
                     ],
                 )
             )
@@ -661,18 +737,27 @@ def print_summary(enriched):
 def main():
     parser = argparse.ArgumentParser(description="시장성 평가 에이전트")
     parser.add_argument(
-        "--input-dir", type=Path, default=INPUT_DIR,
+        "--input-dir",
+        type=Path,
+        default=INPUT_DIR,
         help=f"스타트업 JSON 이 들어오는 폴더 (기본 {INPUT_DIR})",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=OUTPUT_DIR,
+        "--output-dir",
+        type=Path,
+        default=OUTPUT_DIR,
         help=f"결과 JSON 저장 폴더 (기본 {OUTPUT_DIR})",
     )
     parser.add_argument(
-        "--limit", type=int, help="파일마다 앞에서 N개 기업만 처리",
+        "--limit",
+        type=int,
+        help="파일마다 앞에서 N개 기업만 처리",
     )
     parser.add_argument(
-        "--workers", type=int, default=MAX_WORKERS, help=f"동시에 처리할 기업 수 (기본 {MAX_WORKERS})",
+        "--workers",
+        type=int,
+        default=MAX_WORKERS,
+        help=f"동시에 처리할 기업 수 (기본 {MAX_WORKERS})",
     )
     args = parser.parse_args()
 

@@ -689,6 +689,7 @@ def build_embeddings(*, reset: bool = False, force_download: bool = False) -> in
     print()
 
     print("BGE-M3 모델을 로딩합니다...")
+    print("  (Loading weights 100% 이후에도 초기화에 약 20초 내외 걸릴 수 있습니다. 잠시만 기다려 주세요.)")
     model = SentenceTransformer(MODEL_NAME)
     print("모델 로딩 완료")
     print()
