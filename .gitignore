@@ -1,4 +1,5 @@
 # Python
+.python-version
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -10,10 +11,13 @@ __pycache__/
 .venv/
 venv/
 
+# 환경 스캐폴딩
+pyproject.toml
+uv.lock
+
 # Secrets and local configuration
 .env
 .env.*
-!.env.example
 
 # IDE and OS
 .idea/
