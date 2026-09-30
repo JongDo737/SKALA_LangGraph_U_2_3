@@ -25,7 +25,7 @@ AI 데이터센터 전력·에너지 인프라 스타트업을, 공시와 시장
 - Framework: LangGraph
 - LLM / Generator: GPT-4o-mini (스크리닝·경쟁사·보고서), GPT-4.1-mini (시장 요약)
 - LLM / Judge: GPT-4o-mini (시장 질문 10항 채점)
-- Retrieval: ChromaDB, Top-4, cosine distance 0.4 이내만 채택
+- Retrieval: ChromaDB, Top-4, cosine distance 평균값으로 조회
 - Embedding: BAAI/bge-m3
 
 Hit Rate·MRR은 별도 벤치마크를 두지 않았습니다. 관련 없는 청크는 거리 기준으로 버리고 웹 자료로 대체합니다.
