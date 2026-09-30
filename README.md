@@ -60,8 +60,6 @@ flowchart TD
 
 
 
-실행 시 LangGraph 연결도가 함께 출력됩니다.
-
 ## Directory Structure
 
 ```text
