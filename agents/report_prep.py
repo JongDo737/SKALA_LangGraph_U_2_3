@@ -1,4 +1,4 @@
-# 작성자: 통합 담당자 신종민
+# 작성자: 통합 담당자 김가빈
 # 파일 설명: judge 이후 기업 데이터를 report.md 계약에 맞게 정제·보강하고
 #            PDF 보고서 생성 노드로 넘기는 준비 에이전트입니다.
 
@@ -548,7 +548,9 @@ def _compose_summary_next_check(bundle: dict[str, Any]) -> str:
     team_weak = (not team) or ("미검증" in team) or ("공시상" in team)
 
     if op_neg:
-        return "흑자 전환 시점과 전력판매·수주 실적을 확인하면 투자를 확정할 수 있습니다."
+        return (
+            "흑자 전환 시점과 전력판매·수주 실적을 확인하면 투자를 확정할 수 있습니다."
+        )
     if team_weak:
         return "창업자·핵심 인력의 실행 이력을 검증하면 투자 확신을 높일 수 있습니다."
     score = judgement.get("external_market_score")
@@ -575,7 +577,12 @@ def _compose_summary_reasons(bundle: dict[str, Any]) -> list[str]:
     # 기존 investment_reasons 중 설득력 있는 것만 우선
     for item in judgement.get("investment_reasons") or []:
         text = _clean(item)
-        if not text or _is_noise_text(text) or "50점 이상" in text or "참고 자료" in text:
+        if (
+            not text
+            or _is_noise_text(text)
+            or "50점 이상" in text
+            or "참고 자료" in text
+        ):
             continue
         reasons.append(text)
         if len(reasons) >= 2:
@@ -611,7 +618,9 @@ def _compose_summary_reasons(bundle: dict[str, Any]) -> list[str]:
     if len(reasons) < 2:
         revenue = financial.get("매출액") or financial.get("revenue")
         if revenue not in (None, ""):
-            reasons.append(f"공시 매출 {_format_krw(revenue)} 규모로 사업 실체가 확인됩니다.")
+            reasons.append(
+                f"공시 매출 {_format_krw(revenue)} 규모로 사업 실체가 확인됩니다."
+            )
 
     if not reasons:
         reasons = ["시장·재무·경쟁 근거를 종합해 투자 적합으로 판단했습니다."]
@@ -677,9 +686,7 @@ def _build_financial_statement_table(bundle: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     yearly = [
-        row
-        for row in (raw_company.get("financials") or [])
-        if isinstance(row, dict)
+        row for row in (raw_company.get("financials") or []) if isinstance(row, dict)
     ]
     keys = (
         ("매출액", "매출액", "revenue"),
@@ -744,7 +751,12 @@ def _build_financial_statement_table(bundle: dict[str, Any]) -> dict[str, Any]:
 def _compose_differentiation(bundle: dict[str, Any]) -> str:
     enrichment = bundle.get("enrichment") or {}
     text = _clean(enrichment.get("differentiation"))
-    if text and not _is_noise_text(text) and "50점 이상" not in text and len(text) >= 60:
+    if (
+        text
+        and not _is_noise_text(text)
+        and "50점 이상" not in text
+        and len(text) >= 60
+    ):
         return _clip(text, 320)
     market = bundle.get("market_size") or {}
     subdomain = _clean(bundle.get("subdomain"))
@@ -1768,7 +1780,9 @@ def build_report_md_payload(
     ]
     if not summary_reasons:
         summary_reasons = [
-            _fit_summary_note("시장·재무 근거를 종합해 투자 적합으로 판단했습니다.", bold=True)
+            _fit_summary_note(
+                "시장·재무 근거를 종합해 투자 적합으로 판단했습니다.", bold=True
+            )
         ]
 
     revenue = financial.get("매출액") or financial.get("revenue")
@@ -2068,7 +2082,11 @@ def run_report_from_json(
     if not report_payload.get("candidates"):
         raise RuntimeError("report_payload 생성에 실패했습니다.")
 
-    out = Path(output_path) if output_path else (PROJECT_ROOT / "outputs" / "investment_report.pdf")
+    out = (
+        Path(output_path)
+        if output_path
+        else (PROJECT_ROOT / "outputs" / "investment_report.pdf")
+    )
     print("\n[작업] PDF 생성")
     try:
         pdf_path = generate_report(report_payload, out)
