@@ -16,6 +16,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
 
 from config import DEFAULT_COMPANY_COUNT, SCREENING_CONCURRENCY, SCREENING_MODEL
+from prompts import load_prompt
 from state import GraphState
 
 EXACT_STAGES = (
@@ -37,45 +38,8 @@ EXACT_STAGE_PATTERN = re.compile(
 STARTUP_HINT_PATTERN = re.compile(r"스타트업으로 분류|스타트업으로 판단|스타트업입니다")
 SME_HINT_PATTERN = re.compile(r"일반\s*사업|소상공인|중소기업|스타트업이 아닙")
 
-CLASSIFY_PROMPT = """당신은 에너지 기업이 스타트업인지 일반 중소·소상공인인지 구분하는 에이전트입니다.
-
-일반 사업: 주유소·임대·단순 발전소 운영처럼 안정 현금흐름 중심, 은행 대출·자기자본 위주.
-스타트업: 기술·사업 확장, 벤처 투자, 플랫폼·하드웨어 혁신 가능성이 있는 초기·성장 기업.
-
-중요:
-- 투자 라운드(Series)를 모르더라도 스타트업일 수 있습니다.
-- 투자 뉴스가 없다고 일반 사업으로 단정하지 마세요.
-- DART의 자산 기반 Series 추정은 참고만 하고, 그 값으로 일반 사업을 결정하지 마세요.
-- company_type은 startup 또는 sme만 사용하세요. unknown은 금지입니다.
-
-반드시 아래 JSON만 반환합니다.
-{
-  "is_startup": true,
-  "company_type": "startup",
-  "reason": "판단 근거"
-}
-"""
-
-SERIES_PROMPT = """당신은 스타트업 투자 라운드 조사 에이전트입니다.
-
-웹에서 해당 기업의 실제 투자 유치 뉴스, IR, 더벨, 한국경제, 벤처스퀘어, TheVC 등을 검색하세요.
-기사에 단일 라운드가 명시된 경우만 그 값을 씁니다. 예: 시리즈A, Series B, Pre-A, Seed.
-
-금지:
-- 자산 규모로 Series를 추정하지 마세요.
-- Series A ~ B 같은 범위 표현을 쓰지 마세요.
-- 추측으로 Series C를 적지 마세요.
-
-허용 값: Pre-Seed, Seed, Pre-A, Series A, Series B, Series C, Series D, IPO, unknown
-찾지 못하면 investment_stage는 unknown입니다.
-
-반드시 아래 JSON만 반환합니다.
-{
-  "investment_stage": "Series A",
-  "evidence": "어떤 기사에서 어떤 라운드를 확인했는지",
-  "sources": ["https://example.com"]
-}
-"""
+CLASSIFY_PROMPT = load_prompt("startup_classify")
+SERIES_PROMPT = load_prompt("startup_series")
 
 
 class ClassifyDecision(BaseModel):

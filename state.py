@@ -45,7 +45,12 @@ class CompanyRecord(TypedDict, total=False):
     screening: dict[str, Any]
     market: dict[str, Any]
     competition: dict[str, Any]
+    competitor_research: dict[str, Any]
     judgement: dict[str, Any]
+    description: str
+    subdomain: str
+    country: str
+    financials: list[dict[str, Any]]
     evidence: list[Evidence]
     validation_errors: list[str]
 
@@ -73,6 +78,11 @@ class GraphState(TypedDict, total=False):
     dart_rejections: list[dict[str, str]]
     dart_seen_corp_codes: list[str]
     startup_rejections: list[dict[str, str]]
+    judgement_rejections: list[dict[str, str]]
+    competition_payload: dict[str, Any]
+    judgement_payload: dict[str, Any]
+    report_payload: dict[str, Any]
+    wacc: float
 
     # Send로 병렬 실행된 기업별 결과를 operator.add 리듀서로 합칩니다.
     evaluated_companies: Annotated[list[CompanyRecord], operator.add]
