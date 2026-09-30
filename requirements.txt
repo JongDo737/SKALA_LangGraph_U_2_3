@@ -10,6 +10,7 @@ python-dotenv>=1.0.0
 pydantic
 requests>=2.32.0
 aiohttp>=3.10.0
+ipython
 
 # DART / PDF 재무 추출
 pdfplumber
