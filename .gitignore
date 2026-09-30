@@ -36,3 +36,10 @@ outputs/*
 !outputs/.gitkeep
 data/pdfs/*
 !data/pdfs/.gitkeep
+
+# RAG 임베딩용 시장조사 PDF / zip 캐시 (git에 올리지 않음 — FOR_EMBED_ZIP_URL로 다운로드)
+data/for_embed/*
+!data/for_embed/.gitkeep
+data/for_embed_zip/
+*.pdf
+!assets/**/*.pdf
