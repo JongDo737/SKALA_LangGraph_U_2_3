@@ -1,0 +1,26 @@
+# SKALA LangGraph U_2_3 — 메인 의존성
+
+# LangGraph / LLM
+langchain-teddynote
+langgraph
+openai>=1.50.0
+python-dotenv>=1.0.0
+pydantic
+requests>=2.32.0
+
+# DART / PDF 재무 추출
+pdfplumber
+pypdf
+
+# RAG 임베딩 / 검색
+sentence-transformers>=5.1.0
+chromadb>=1.0.0
+PyMuPDF>=1.26.0
+ddgs>=9.0.0
+numpy
+
+# macOS Vision OCR (스캔 PDF용, darwin만)
+pyobjc-framework-Vision>=10.0; sys_platform == "darwin"
+
+# 투자 보고서 PDF
+reportlab>=4,<5

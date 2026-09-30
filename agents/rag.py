@@ -35,9 +35,9 @@ import threading
 from collections import Counter
 from typing import Any
 
-try:  # 메인 프로젝트: agents/rag.py + rag_engine/ 구조
-    from rag_engine.market_agent import MarketAgent, get_name, get_topic
-except ImportError:  # 단독 실행: rag.py 와 market_agent.py 가 같은 폴더
+try:  # 프로젝트 루트에서 app.py 실행
+    from agents.market_agent import MarketAgent, get_name, get_topic
+except ImportError:  # agents/ 폴더에서 단독 실행
     from market_agent import MarketAgent, get_name, get_topic
 
 _agent: MarketAgent | None = None
@@ -64,62 +64,101 @@ def market_description(summary):
         summary.get("target_market"),
         f"시장 규모: {summary['market_size']}" if summary.get("market_size") else None,
         f"성장성: {summary['growth']}" if summary.get("growth") else None,
-        f"수요 근거: {summary['demand_evidence']}" if summary.get("demand_evidence") else None,
+        (
+            f"수요 근거: {summary['demand_evidence']}"
+            if summary.get("demand_evidence")
+            else None
+        ),
     ]
 
     return ". ".join(part for part in parts if part)
 
 
 def to_state_company(enriched: dict[str, Any]) -> dict[str, Any]:
-    """MarketAgent 결과를 GraphState 의 기업 dict 형태(description/subdomain/country/market)로 바꾼다."""
-    company = {key: value for key, value in enriched.items() if key != "market_context"}
-    context = enriched["market_context"]
-    inferred = context.get("inferred") or {}
+    """MarketAgent 결과(market_context 포함)를 competition/judge용 State 기업 dict로 바꾼다.
 
+    JSON 파일이 아니라 GraphState.eligible_companies 원소(dict)로 반환한다.
+    """
+    company = {key: value for key, value in enriched.items() if key != "market_context"}
+    context = enriched.get("market_context") or {}
+    inferred = context.get("inferred") or {}
+    summary = context.get("summary") or {}
+
+    name = get_name(company)
     topic = get_topic(company) or inferred.get("topic") or ""
-    subdomain = company.get("subdomain") or inferred.get("subdomain") or topic
+    subdomain = (
+        company.get("subdomain")
+        or inferred.get("subdomain")
+        or topic
+        or "energy infrastructure"
+    )
     address = company.get("address") or ""
     country = (
         company.get("country")
         or inferred.get("country")
-        or ("KR" if re.search(r"[가-힣]", address) else "")
+        or ("KR" if re.search(r"[가-힣]", address) else "KR")
     )
 
-    # description 은 필수 → 추정에 실패해도 비어 있지 않게 한다
+    # description 은 competition REQUIRED — 추정 실패해도 비우지 않는다
     description = (
         company.get("description")
         or company.get("intro")
         or inferred.get("description")
-        or f"{get_name(company)} (사업 분야 정보 부족)"
+        or market_description(summary)
+        or f"{name} (사업 분야 정보 부족)"
     )
 
-    sources = context.get("sources", [])
-    distances = [source["distance"] for source in sources if "distance" in source]
+    sources = context.get("sources") or []
+    distances = [
+        source["distance"]
+        for source in sources
+        if isinstance(source, dict) and "distance" in source
+    ]
 
     market = {
-        "status": context["source"],  # "rag" | "web" | "none"
-        "distance": min(distances) if distances else None,  # RAG 근거 청크의 최소 cosine 거리
-        "chunk": sources,  # 근거 자료 참조(파일·페이지 / 제목·URL). 원문은 붙이지 않는다
-        "description": market_description(context.get("summary")),
+        "status": context.get("source") or "none",  # "rag" | "web" | "none"
+        "distance": min(distances) if distances else None,
+        "chunk": sources,
+        "description": market_description(summary) or description,
         "subdomain": subdomain,
-        "summary": context.get("summary"),  # target_market / market_size / growth / demand_evidence
+        "summary": summary,
         "topic": inferred.get("topic") or topic,
         "topic_inferred": bool(inferred),
         "topic_basis": inferred.get("basis"),
+        "demand": summary.get("demand_evidence"),
+        "sources": sources,
     }
 
     if context.get("rag_rejected"):
-        market["rag_rejected"] = context["rag_rejected"]  # 분야가 달라 제외한 RAG 문서 분야
-
+        market["rag_rejected"] = context["rag_rejected"]
     if context.get("error"):
         market["error"] = context["error"]
 
+    # financials 가 없으면 financial_summary 1건으로 보완 (judge VBM용)
+    financials = company.get("financials")
+    if not (isinstance(financials, list) and financials):
+        summary_fin = company.get("financial_summary")
+        if isinstance(summary_fin, dict) and any(summary_fin.values()):
+            row = dict(summary_fin)
+            row.setdefault("year", str(company.get("rcept_dt") or "")[:4] or None)
+            financials = [row]
+        else:
+            financials = []
+
     return {
         **company,
+        "id": company.get("id") or company.get("corp_code"),
+        "name": company.get("name") or company.get("company_name") or name,
+        "company_name": company.get("company_name") or company.get("name") or name,
         "description": description,
+        "intro": company.get("intro") or inferred.get("description") or description,
         "subdomain": subdomain,
         "country": country,
+        "region": company.get("region") or country,
+        "financials": financials,
         "market": market,
+        # RAG 원본 구조도 State에 유지 (디버깅·report 참고용)
+        "market_context": context,
     }
 
 
@@ -129,8 +168,10 @@ def market_research_node(state: dict[str, Any]) -> dict[str, Any]:
     market_attempts = int(state.get("market_attempts") or 0)
     execution_log = list(state.get("execution_log") or [])
 
-    print("\n[노드 실행] market_research (agents/rag.py)")
-    print(f"  입력 기업 수 : {len(companies)} / 목표={state.get('target_company_count')}")
+    print("\n[작업] 시장성 조사 (RAG)")
+    print(
+        f"  입력 기업 수 : {len(companies)} / 목표={state.get('target_company_count')}"
+    )
 
     enriched = [to_state_company(company) for company in get_agent().run(companies)]
 

@@ -90,7 +90,9 @@ class SerperSearchClient:
             )
             return []
         except URLError as exc:
-            print(f"  [competition] Serper 네트워크 오류: {exc}. 빈 결과로 계속 진행합니다.")
+            print(
+                f"  [competition] Serper 네트워크 오류: {exc}. 빈 결과로 계속 진행합니다."
+            )
             return []
         return [
             SearchResult(
@@ -122,7 +124,9 @@ def _is_placeholder_api_key(value: str) -> bool:
     )
 
 
-def validate_companies(companies: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def validate_companies(
+    companies: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not isinstance(companies, list):
         return [], [{"index": None, "errors": ["companies must be a list"]}]
 
@@ -140,7 +144,9 @@ def validate_companies(companies: Any) -> tuple[list[dict[str, Any]], list[dict[
             errors.append("duplicate company name")
         names.add(normalized_name)
         if errors:
-            invalid.append({"index": index, "company": company.get("name"), "errors": errors})
+            invalid.append(
+                {"index": index, "company": company.get("name"), "errors": errors}
+            )
         else:
             valid.append(company)
     return valid, invalid
@@ -160,10 +166,15 @@ def _candidate_name(result: SearchResult) -> str:
 
 
 def _is_same_company(name: str, candidate: str) -> bool:
-    return name.casefold() in candidate.casefold() or candidate.casefold() in name.casefold()
+    return (
+        name.casefold() in candidate.casefold()
+        or candidate.casefold() in name.casefold()
+    )
 
 
-def research_company(company: dict[str, Any], desired_count: int, client: SearchClient) -> dict[str, Any]:
+def research_company(
+    company: dict[str, Any], desired_count: int, client: SearchClient
+) -> dict[str, Any]:
     name, detail = _clean(company["name"]), subdomain(company)
     region = _clean(company.get("country") or company.get("region")) or "KR"
     # 긴 description/재무 문구를 넣지 않고, 경쟁사 검색에 필요한 짧은 질의만 사용합니다.
@@ -188,12 +199,14 @@ def research_company(company: dict[str, Any], desired_count: int, client: Search
         if not candidate or key in seen or _is_same_company(name, candidate):
             continue
         seen.add(key)
-        competitors.append({
-            "name": candidate,
-            "evidence": item.snippet,
-            "source_url": item.url,
-            "search_query": query,
-        })
+        competitors.append(
+            {
+                "name": candidate,
+                "evidence": item.snippet,
+                "source_url": item.url,
+                "search_query": query,
+            }
+        )
         if desired_count > 0 and len(competitors) == desired_count:
             break
     complete = desired_count == 0 or len(competitors) >= desired_count
@@ -214,14 +227,20 @@ def run(payload: dict[str, Any], client: SearchClient) -> dict[str, Any]:
     desired_count = len(companies) if raw_desired is None else int(raw_desired)
     if desired_count < 0:
         raise ValueError("competitors_per_company must be zero or greater")
-    results = [research_company(company, desired_count, client) for company in companies]
+    results = [
+        research_company(company, desired_count, client) for company in companies
+    ]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "domain": payload.get("domain", "energy infrastructure"),
         # judge.py가 ROIC-WACC를 계산할 수 있도록 상위 가정을 보존한다.
         "wacc": payload.get("wacc"),
         "validation": {
-            "received_company_count": len(payload.get("companies", [])) if isinstance(payload.get("companies"), list) else 0,
+            "received_company_count": (
+                len(payload.get("companies", []))
+                if isinstance(payload.get("companies"), list)
+                else 0
+            ),
             "valid_company_count": len(companies),
             "invalid_companies": invalid,
         },
@@ -232,11 +251,21 @@ def run(payload: dict[str, Any], client: SearchClient) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="-", help="JSON file path, or - for stdin")
-    parser.add_argument("--search-provider", choices=("serper", "empty"), default="empty")
+    parser.add_argument(
+        "--search-provider", choices=("serper", "empty"), default="empty"
+    )
     args = parser.parse_args()
-    raw = sys.stdin.read() if args.input == "-" else open(args.input, encoding="utf-8").read()
+    raw = (
+        sys.stdin.read()
+        if args.input == "-"
+        else open(args.input, encoding="utf-8").read()
+    )
     payload = json.loads(raw)
-    client: SearchClient = SerperSearchClient() if args.search_provider == "serper" else EmptySearchClient()
+    client: SearchClient = (
+        SerperSearchClient()
+        if args.search_provider == "serper"
+        else EmptySearchClient()
+    )
     print(json.dumps(run(payload, client), ensure_ascii=False, indent=2))
 
 
@@ -276,7 +305,11 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
     reuse: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     for company in input_companies:
-        judgement = company.get("judgement") if isinstance(company.get("judgement"), dict) else {}
+        judgement = (
+            company.get("judgement")
+            if isinstance(company.get("judgement"), dict)
+            else {}
+        )
         research = company.get("competitor_research") or company.get("competition")
         if judgement.get("decision") == "적합" and isinstance(research, dict):
             reuse.append(deepcopy(company))
@@ -285,22 +318,59 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
 
     companies_payload = []
     for company in pending:
-        market = company.get("market") if isinstance(company.get("market"), dict) else {}
+        market = (
+            company.get("market") if isinstance(company.get("market"), dict) else {}
+        )
+        market_context = (
+            company.get("market_context")
+            if isinstance(company.get("market_context"), dict)
+            else {}
+        )
+        inferred = (
+            market_context.get("inferred")
+            if isinstance(market_context.get("inferred"), dict)
+            else {}
+        )
+        summary = (
+            market_context.get("summary")
+            if isinstance(market_context.get("summary"), dict)
+            else {}
+        )
+        market_summary = (
+            market.get("summary") if isinstance(market.get("summary"), dict) else {}
+        )
+        description = (
+            company.get("description")
+            or market.get("description")
+            or inferred.get("description")
+            or company.get("intro")
+            or ""
+        )
+        # summary 가 있으면 짧은 시장 문맥을 description 뒤에 보강 (검색 질의는 name+subdomain만 씀)
+        market_blurb_parts = [
+            (market_summary or summary).get("target_market"),
+            (market_summary or summary).get("market_size"),
+        ]
+        market_blurb = " / ".join(part for part in market_blurb_parts if part)
+        if market_blurb and market_blurb not in description:
+            description = f"{description} | {market_blurb}".strip(" |")
+
         companies_payload.append(
             {
                 "name": company.get("name") or company.get("company_name"),
-                "description": (
-                    company.get("description")
-                    or market.get("description")
-                    or company.get("intro")
-                    or ""
-                ),
+                "description": description,
                 "subdomain": (
                     company.get("subdomain")
                     or market.get("subdomain")
+                    or inferred.get("subdomain")
                     or "energy infrastructure"
                 ),
-                "country": company.get("country") or company.get("region") or "KR",
+                "country": (
+                    company.get("country")
+                    or company.get("region")
+                    or inferred.get("country")
+                    or "KR"
+                ),
                 "financials": company.get("financials")
                 or (
                     [company.get("financial_summary")]
@@ -358,7 +428,11 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
     for company in input_companies:
         name = str(company.get("name") or company.get("company_name") or "").casefold()
         updated = deepcopy(company)
-        judgement = updated.get("judgement") if isinstance(updated.get("judgement"), dict) else {}
+        judgement = (
+            updated.get("judgement")
+            if isinstance(updated.get("judgement"), dict)
+            else {}
+        )
         existing = updated.get("competitor_research") or updated.get("competition")
         if judgement.get("decision") == "적합" and isinstance(existing, dict):
             updated["competition"] = existing
@@ -388,7 +462,7 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
         f"기존 적합 유지 {len(reuse)}개 "
         f"(유효={result.get('validation', {}).get('valid_company_count', 0)})"
     )
-    print("\n[노드 실행] compare_competition (agents/compitition.py)")
+    print("\n[작업] 경쟁사 조사")
     print(f"  입력 State : 기업={names}")
     print(
         f"  반환 값    : research_results={len(result.get('research_results', []))}개, "
@@ -396,7 +470,9 @@ def competition_node(state: dict[str, Any]) -> dict[str, Any]:
     )
     for item in result.get("research_results", []):
         company = item.get("company") or {}
-        competitors = item.get("competitors") if isinstance(item.get("competitors"), list) else []
+        competitors = (
+            item.get("competitors") if isinstance(item.get("competitors"), list) else []
+        )
         competitor_names = [
             str(row.get("name") or "").strip()
             for row in competitors

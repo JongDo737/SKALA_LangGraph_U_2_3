@@ -5,34 +5,43 @@
 # ---------------------------------------------------------------------------
 # 요약
 # ---------------------------------------------------------------------------
-# - 실행: python embed.py --reset   (기존 DB 삭제 후 data/for_embed/*.pdf 전체를 새로 임베딩)
+# - 실행: python -m agents.embed --reset
+# - PDF 는 git 에 올리지 않습니다.
+#   FOR_EMBED_ZIP_URL(.env) 에서 zip 을 받아 data/for_embed/ 에 풀고 임베딩합니다.
 # - Semantic Chunking: 문장 임베딩 유사도(0.65 미만)가 떨어지는 지점에서 분할, 청크 200~1200자
-# - 스캔 PDF(텍스트 레이어 없음)는 macOS Vision OCR 로 읽음 (비 macOS 는 OCR 불가 → 경고 후 건너뜀)
-# - 문서 메타데이터(domain / sub_domain / doc_type / region / keywords)를 청크마다 저장
-#     · data/doc_metadata.json 에 있으면 그대로 사용, 없는 PDF 는 LLM(OPENAI_API_KEY)이 자동 생성해 저장
-# - 새 PDF 추가: data/for_embed/ 에 넣고 다시 실행 (PDF 총 200페이지 이내 권장)
+# - 스캔 PDF(텍스트 레이어 없음)는 macOS Vision OCR 로 읽음
+# - 문서 메타데이터: data/doc_metadata.json (없으면 LLM 자동 태깅)
 # ---------------------------------------------------------------------------
-
 
 import argparse
 import json
 import os
 import re
 import shutil
+import tempfile
 import unicodedata
+import zipfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import chromadb
-import pymupdf as fitz
 import numpy as np
+import pymupdf as fitz
+import requests
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
 
-# 경로 설정
-BASE_DIR = Path(__file__).resolve().parent
-PDF_DIR = BASE_DIR / "data" / "for_embed"
-DB_DIR = BASE_DIR / "chroma_db"
-DOC_METADATA_PATH = BASE_DIR / "data" / "doc_metadata.json"  # 문서(PDF)별 분야·유형 메타데이터
+# 경로 설정 (프로젝트 루트 기준 — agents/ 가 아님)
+AGENTS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = AGENTS_DIR.parent
+BASE_DIR = PROJECT_ROOT  # 하위 호환 별칭
+PDF_DIR = PROJECT_ROOT / "data" / "for_embed"
+ZIP_CACHE_DIR = PROJECT_ROOT / "data" / "for_embed_zip"
+ZIP_PATH = ZIP_CACHE_DIR / "for_embed.zip"
+DB_DIR = PROJECT_ROOT / "chroma_db"
+DOC_METADATA_PATH = PROJECT_ROOT / "data" / "doc_metadata.json"
+ENV_PATH = PROJECT_ROOT / ".env"
 
 COLLECTION_NAME = "rag_documents"
 MODEL_NAME = "BAAI/bge-m3"
@@ -47,6 +56,122 @@ BATCH_SIZE = 32
 
 # 스캔 PDF OCR 설정
 OCR_DPI = 200
+
+load_dotenv(ENV_PATH)
+
+
+def _google_drive_file_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    if "drive.google.com" not in parsed.netloc:
+        return None
+    match = re.search(r"/file/d/([^/]+)", parsed.path)
+    if match:
+        return match.group(1)
+    return parse_qs(parsed.query).get("id", [None])[0]
+
+
+def resolve_download_url(url: str) -> str:
+    """Google Drive 공유 링크면 직접 다운로드 URL로 변환합니다."""
+    file_id = _google_drive_file_id(url)
+    if file_id:
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
+
+def for_embed_zip_url() -> str:
+    return (os.getenv("FOR_EMBED_ZIP_URL") or os.getenv("EMBED_ZIP_URL") or "").strip()
+
+
+def list_pdfs(directory: Path | None = None) -> list[Path]:
+    target = directory or PDF_DIR
+    if not target.exists():
+        return []
+    return sorted(target.glob("*.pdf"))
+
+
+def download_zip(url: str, destination: Path) -> Path:
+    """zip URL을 받아 destination에 저장합니다."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    download_url = resolve_download_url(url)
+    print(f"[embed] zip 다운로드: {download_url}")
+
+    session = requests.Session()
+    response = session.get(download_url, stream=True, timeout=180)
+    response.raise_for_status()
+
+    # Google Drive 대용량 파일 confirm 토큰 처리
+    if "drive.google.com" in download_url:
+        for key, value in response.cookies.items():
+            if key.startswith("download_warning"):
+                response = session.get(
+                    download_url,
+                    params={"confirm": value},
+                    stream=True,
+                    timeout=180,
+                )
+                response.raise_for_status()
+                break
+
+    with destination.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 256):
+            if chunk:
+                handle.write(chunk)
+
+    if destination.stat().st_size < 1000:
+        raise RuntimeError(
+            f"다운로드된 zip이 너무 작습니다 ({destination.stat().st_size} bytes). "
+            "FOR_EMBED_ZIP_URL 또는 공유 권한을 확인하세요."
+        )
+    print(f"[embed] zip 저장 완료: {destination} ({destination.stat().st_size:,} bytes)")
+    return destination
+
+
+def extract_zip_to_for_embed(zip_path: Path, *, clear_existing: bool = True) -> list[Path]:
+    """zip을 data/for_embed/ 에 풉니다. 하위 폴더의 PDF도 모읍니다."""
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
+    if clear_existing:
+        for pdf in list_pdfs(PDF_DIR):
+            pdf.unlink(missing_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="for_embed_") as tmp:
+        tmp_dir = Path(tmp)
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            archive.extractall(tmp_dir)
+
+        extracted: list[Path] = []
+        for pdf in tmp_dir.rglob("*.pdf"):
+            target = PDF_DIR / pdf.name
+            if target.exists():
+                target = PDF_DIR / f"{pdf.parent.name}_{pdf.name}"
+            shutil.copy2(pdf, target)
+            extracted.append(target)
+
+    if not extracted:
+        raise RuntimeError(f"zip 안에 PDF가 없습니다: {zip_path}")
+
+    print(f"[embed] PDF {len(extracted)}개 압축 해제 → {PDF_DIR}")
+    return sorted(extracted)
+
+
+def ensure_for_embed_pdfs(*, force_download: bool = False) -> list[Path]:
+    """임베딩용 PDF를 준비합니다. zip URL에서 받아 풀거나, 이미 있으면 재사용합니다."""
+    existing = list_pdfs()
+    if existing and not force_download:
+        print(f"[embed] 기존 PDF {len(existing)}개 사용: {PDF_DIR}")
+        return existing
+
+    url = for_embed_zip_url()
+    if not url:
+        if existing:
+            print("[embed] FOR_EMBED_ZIP_URL 미설정 — 로컬 data/for_embed PDF를 사용합니다.")
+            return existing
+        raise RuntimeError(
+            "임베딩 PDF가 없습니다. .env 에 FOR_EMBED_ZIP_URL 을 설정하거나 "
+            "data/for_embed/ 에 PDF를 두세요."
+        )
+
+    zip_path = download_zip(url, ZIP_PATH)
+    return extract_zip_to_for_embed(zip_path, clear_existing=True)
 
 
 def ocr_page(page):
@@ -266,7 +391,7 @@ def auto_tag(pdf_path, known_metadata):
     """메타데이터가 없는 PDF 를 LLM 으로 태깅한다. API 키가 없거나 실패하면 None."""
     from dotenv import load_dotenv
 
-    load_dotenv(BASE_DIR / ".env")
+    load_dotenv(ENV_PATH)
 
     if not os.getenv("OPENAI_API_KEY"):
         return None
@@ -389,35 +514,34 @@ def reset_database():
     """기존 ChromaDB를 삭제한다."""
     if DB_DIR.exists():
         shutil.rmtree(DB_DIR)
-
         print("기존 ChromaDB를 삭제했습니다.")
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def vector_db_ready() -> bool:
+    """ChromaDB에 문서가 이미 있으면 True."""
+    if not DB_DIR.exists():
+        return False
+    try:
+        client = chromadb.PersistentClient(path=str(DB_DIR))
+        collection = client.get_collection(COLLECTION_NAME)
+        return collection.count() > 0
+    except Exception:
+        return False
 
-    parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="기존 ChromaDB를 삭제하고 새로 생성합니다.",
-    )
 
-    args = parser.parse_args()
-
-    if args.reset:
+def build_embeddings(*, reset: bool = False, force_download: bool = False) -> int:
+    """zip에서 PDF를 준비한 뒤 chroma_db 에 임베딩한다. 저장된 chunk 수를 반환."""
+    if reset:
         reset_database()
 
-    PDF_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    pdf_files = ensure_for_embed_pdfs(force_download=force_download)
 
     print("=" * 70)
     print("BGE-M3 Semantic Chunking RAG Embedding")
     print("=" * 70)
-
     print(f"PDF directory : {PDF_DIR}")
     print(f"ChromaDB      : {DB_DIR}")
+    print(f"ZIP URL       : {for_embed_zip_url() or '(not set)'}")
     print(f"Model         : {MODEL_NAME}")
     print(f"Max chunk     : {MAX_CHUNK_SIZE}")
     print(f"Min chunk     : {MIN_CHUNK_SIZE}")
@@ -425,72 +549,58 @@ def main():
     print()
 
     print("BGE-M3 모델을 로딩합니다...")
-
-    model = SentenceTransformer(
-        MODEL_NAME
-    )
-
+    model = SentenceTransformer(MODEL_NAME)
     print("모델 로딩 완료")
     print()
 
-    pdf_files = sorted(
-        PDF_DIR.glob("*.pdf")
-    )
-
     if not pdf_files:
         print("PDF 파일을 찾을 수 없습니다.")
-        return
+        return 0
 
     print(f"PDF 파일 수: {len(pdf_files)}")
     print()
 
     doc_metadata = load_doc_metadata()
-
     all_chunks = []
 
     for pdf_path in pdf_files:
         print(f"[PDF] {pdf_path.name}")
-
         name = unicodedata.normalize("NFC", pdf_path.name)
 
         if name not in doc_metadata:
             tagged = auto_tag(pdf_path, doc_metadata)
-
             if tagged:
                 doc_metadata[name] = tagged
                 save_doc_metadata(doc_metadata)
-                print(f"  + 메타데이터 자동 생성: {tagged['domain']} / {tagged['sub_domain']} ({tagged['doc_type']}, {tagged['region']})")
+                print(
+                    f"  + 메타데이터 자동 생성: {tagged['domain']} / "
+                    f"{tagged['sub_domain']} ({tagged['doc_type']}, {tagged['region']})"
+                )
             else:
-                print(f"  ! 메타데이터가 없고 자동 생성도 못 했습니다 (OPENAI_API_KEY 확인). unknown 으로 저장")
+                print(
+                    "  ! 메타데이터가 없고 자동 생성도 못 했습니다 "
+                    "(OPENAI_API_KEY 확인). unknown 으로 저장"
+                )
 
-        chunks = create_chunks(
-            pdf_path,
-            model,
-            doc_metadata,
-        )
-
+        chunks = create_chunks(pdf_path, model, doc_metadata)
         print(f"  → Semantic Chunk {len(chunks)}개 생성")
-
         if not chunks:
-            print("  ! 청크가 0개입니다. 텍스트가 없는 스캔 PDF 로 보이며, OCR(macOS 전용)을 쓸 수 없는 환경일 수 있습니다.")
-
+            print(
+                "  ! 청크가 0개입니다. 텍스트가 없는 스캔 PDF 로 보이며, "
+                "OCR(macOS 전용)을 쓸 수 없는 환경일 수 있습니다."
+            )
         all_chunks.extend(chunks)
 
     if not all_chunks:
         print("생성된 Chunk가 없습니다.")
-        return
+        return 0
 
     print()
     print(f"전체 Chunk 수: {len(all_chunks)}")
     print()
 
-    documents = [
-        chunk["text"]
-        for chunk in all_chunks
-    ]
-
+    documents = [chunk["text"] for chunk in all_chunks]
     print("BGE-M3 임베딩을 생성합니다...")
-
     embeddings = model.encode(
         documents,
         normalize_embeddings=True,
@@ -498,24 +608,14 @@ def main():
         show_progress_bar=True,
         convert_to_numpy=True,
     )
-
     print("임베딩 생성 완료")
     print()
 
     collection = create_chroma_collection()
-
-    ids = [
-        f"chunk-{index}"
-        for index in range(len(all_chunks))
-    ]
-
-    metadatas = [
-        chunk["metadata"]
-        for chunk in all_chunks
-    ]
+    ids = [f"chunk-{index}" for index in range(len(all_chunks))]
+    metadatas = [chunk["metadata"] for chunk in all_chunks]
 
     print("ChromaDB에 저장합니다...")
-
     collection.add(
         ids=ids,
         documents=documents,
@@ -531,6 +631,35 @@ def main():
     print(f"Documents  : {collection.count()}")
     print(f"Embedding  : {embeddings.shape}")
     print("=" * 70)
+    return int(collection.count())
+
+
+def ensure_vector_db(*, force_rebuild: bool = False, force_download: bool = False) -> int:
+    """앱 시작 시 한 번 호출. DB가 있으면 건너뛰고, 없거나 force면 임베딩."""
+    if not force_rebuild and not force_download and vector_db_ready():
+        client = chromadb.PersistentClient(path=str(DB_DIR))
+        count = client.get_collection(COLLECTION_NAME).count()
+        print(f"[embed] 기존 ChromaDB 사용: {DB_DIR} ({count} chunks)")
+        return int(count)
+
+    print("[embed] ChromaDB 준비 — zip 다운로드(필요 시) 후 임베딩합니다...")
+    return build_embeddings(reset=force_rebuild, force_download=force_download)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="기존 ChromaDB를 삭제하고 새로 생성합니다.",
+    )
+    parser.add_argument(
+        "--redownload-pdfs",
+        action="store_true",
+        help="FOR_EMBED_ZIP_URL 에서 zip을 다시 받아 data/for_embed 를 덮어씁니다.",
+    )
+    args = parser.parse_args()
+    build_embeddings(reset=args.reset, force_download=args.redownload_pdfs)
 
 
 if __name__ == "__main__":

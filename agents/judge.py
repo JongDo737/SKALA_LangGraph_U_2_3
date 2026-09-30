@@ -670,7 +670,7 @@ def judgement_node(state: dict[str, Any]) -> dict[str, Any]:
         "wacc": default_wacc,
         "research_results": patched_results,
     }
-    print("\n[노드 실행] judge_investment (agents/judge.py)")
+    print("\n[작업] 투자 적합 판단")
     print(
         f"  입력 State : 기업="
         f"{[c.get('name') or c.get('company_name') for c in input_companies]} "
