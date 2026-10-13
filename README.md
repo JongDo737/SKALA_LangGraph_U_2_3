@@ -63,8 +63,7 @@ AI 데이터센터 전력·에너지 인프라 기업을 재무·시장·경쟁 
 
 
 ## Architecture
-
-
+<img width="800" height="1150" alt="mermaid-diagram" src="https://github.com/user-attachments/assets/867a0354-695e-4888-a7c6-2d02e23cadfd" />
 
 ## Directory Structure
 
