@@ -1,0 +1,503 @@
+{
+ "description": "벡터DB(18문서·772청크) 검색 평가용 QA. 질의는 문서 제목을 그대로 베끼지 않고 분야 질의·자연어·키워드/영문 3종으로 작성. relevant 는 사람이 정답으로 인정하는 문서(파일명).",
+ "items": [
+  {
+   "id": "q01",
+   "target": "ups",
+   "query": "데이터센터 UPS로 전력망 주파수 응답(FFR)을 제공하는 기술",
+   "relevant": [
+    "데이터센터 On-Line UPS를 이용한 전력망 FFR 기술 개발.pdf.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q02",
+   "target": "ups",
+   "query": "무정전전원장치 배터리를 계통 주파수 안정화에 활용하는 방법",
+   "relevant": [
+    "데이터센터 On-Line UPS를 이용한 전력망 FFR 기술 개발.pdf.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q03",
+   "target": "ups",
+   "query": "Fast Frequency Response를 데이터센터 UPS로 구현",
+   "relevant": [
+    "데이터센터 On-Line UPS를 이용한 전력망 FFR 기술 개발.pdf.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q04",
+   "target": "lgc",
+   "query": "액화석유가스 실린더 시장 규모 성장 전망",
+   "relevant": [
+    "액화 가스 실린더(LGC) 시장 규모, 2035년 전망 보고서.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q05",
+   "target": "lgc",
+   "query": "LPG 가스 용기 시장 수요와 연평균 성장률",
+   "relevant": [
+    "액화 가스 실린더(LGC) 시장 규모, 2035년 전망 보고서.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q06",
+   "target": "lgc",
+   "query": "가스 실린더 제조 시장 2035 전망",
+   "relevant": [
+    "액화 가스 실린더(LGC) 시장 규모, 2035년 전망 보고서.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q07",
+   "target": "floating",
+   "query": "수상 태양광 발전 시장 규모와 성장",
+   "relevant": [
+    "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q08",
+   "target": "floating",
+   "query": "물 위에 설치하는 부유식 태양광 시장 전망",
+   "relevant": [
+    "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q09",
+   "target": "floating",
+   "query": "floating solar PV market CAGR",
+   "relevant": [
+    "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q10",
+   "target": "battery",
+   "query": "이차전지 시장 규모 및 점유율 성장 전망",
+   "relevant": [
+    "2차 전지 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q11",
+   "target": "battery",
+   "query": "배터리 셀 시장 전기차 수요 연평균 성장률",
+   "relevant": [
+    "2차 전지 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q12",
+   "target": "battery",
+   "query": "리튬이온 전지 전체 시장 2035 규모",
+   "relevant": [
+    "2차 전지 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q13",
+   "target": "module",
+   "query": "태양광 모듈 시장 규모 성장 전망",
+   "relevant": [
+    "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q14",
+   "target": "module",
+   "query": "PV 패널 모듈 제조 시장 수요 증가",
+   "relevant": [
+    "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q15",
+   "target": "module",
+   "query": "solar module market share and growth",
+   "relevant": [
+    "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q16",
+   "target": "wind",
+   "query": "풍력 터빈 시장 규모와 성장",
+   "relevant": [
+    "풍력 터빈 시장 규모 및 점유율, 2035년 성장 전망.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q17",
+   "target": "wind",
+   "query": "풍력 발전용 터빈 수요 연평균 성장률 2035",
+   "relevant": [
+    "풍력 터빈 시장 규모 및 점유율, 2035년 성장 전망.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q18",
+   "target": "wind",
+   "query": "wind turbine market size forecast",
+   "relevant": [
+    "풍력 터빈 시장 규모 및 점유율, 2035년 성장 전망.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q19",
+   "target": "ess",
+   "query": "전력망용 에너지저장장치 리튬이온 배터리 시장",
+   "relevant": [
+    "전력망용 리튬 이온 배터리 시장 규모 및 성장 분석 (2035년).pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q20",
+   "target": "ess",
+   "query": "ESS 그리드 스토리지 시장 성장 분석",
+   "relevant": [
+    "전력망용 리튬 이온 배터리 시장 규모 및 성장 분석 (2035년).pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q21",
+   "target": "ess",
+   "query": "계통 연계 배터리 저장 시스템 수요 전망",
+   "relevant": [
+    "전력망용 리튬 이온 배터리 시장 규모 및 성장 분석 (2035년).pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q22",
+   "target": "cooling",
+   "query": "데이터센터 냉각 시장 규모 점유율",
+   "relevant": [
+    "데이터 센터 냉각 시장 규모, 점유율 | 산업 보고서 [2034].pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q23",
+   "target": "cooling",
+   "query": "액침냉각 액체냉각 시장 성장",
+   "relevant": [
+    "데이터 센터 냉각 시장 규모, 점유율 | 산업 보고서 [2034].pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q24",
+   "target": "cooling",
+   "query": "서버실 쿨링 솔루션 시장 전망",
+   "relevant": [
+    "데이터 센터 냉각 시장 규모, 점유율 | 산업 보고서 [2034].pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q25",
+   "target": "fuelcell",
+   "query": "연료전지 시장 규모 및 점유율 성장 전망",
+   "relevant": [
+    "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf",
+    "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q26",
+   "target": "fuelcell",
+   "query": "연료전지 발전 시스템 시장 연평균 성장률",
+   "relevant": [
+    "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf",
+    "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q27",
+   "target": "fuelcell",
+   "query": "fuel cell market growth outlook",
+   "relevant": [
+    "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf",
+    "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q28",
+   "target": "csp",
+   "query": "태양열 집광형 발전 시장 규모",
+   "relevant": [
+    "태양열 집광기 시장 규모 및 점유율 | 2035년 성장 전망.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q29",
+   "target": "csp",
+   "query": "CSP 집광식 태양열 발전 시장 전망",
+   "relevant": [
+    "태양열 집광기 시장 규모 및 점유율 | 2035년 성장 전망.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q30",
+   "target": "csp",
+   "query": "반사경으로 열을 모으는 태양열 발전소 시장",
+   "relevant": [
+    "태양열 집광기 시장 규모 및 점유율 | 2035년 성장 전망.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q31",
+   "target": "runaway",
+   "query": "이차전지 열폭주를 막는 고분자 소재",
+   "relevant": [
+    "고분자 소재를 이용한 이차전지 열폭주 제어 기술 개발.pdf.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q32",
+   "target": "runaway",
+   "query": "배터리 화재 확산을 방지하는 소재 기술",
+   "relevant": [
+    "고분자 소재를 이용한 이차전지 열폭주 제어 기술 개발.pdf.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q33",
+   "target": "runaway",
+   "query": "thermal runaway suppression polymer lithium battery",
+   "relevant": [
+    "고분자 소재를 이용한 이차전지 열폭주 제어 기술 개발.pdf.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q34",
+   "target": "fusion",
+   "query": "핵융합 시장 규모 성장 전망",
+   "relevant": [
+    "핵융합 시장 규모 및 점유율, 성장 전망 2027-2036.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q35",
+   "target": "fusion",
+   "query": "핵융합 발전 산업 시장 2036",
+   "relevant": [
+    "핵융합 시장 규모 및 점유율, 성장 전망 2027-2036.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q36",
+   "target": "fusion",
+   "query": "fusion energy market growth",
+   "relevant": [
+    "핵융합 시장 규모 및 점유율, 성장 전망 2027-2036.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q37",
+   "target": "pv",
+   "query": "태양광 발전 시장 규모 점유율 동향",
+   "relevant": [
+    "태양광 발전 시장 규모, 점유율, 동향 | 성장 보고서 [2032].pdf",
+    "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf",
+    "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q38",
+   "target": "pv",
+   "query": "PV 발전 시장 성장 보고서 2032",
+   "relevant": [
+    "태양광 발전 시장 규모, 점유율, 동향 | 성장 보고서 [2032].pdf",
+    "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf",
+    "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q39",
+   "target": "pv",
+   "query": "solar power market size and trends",
+   "relevant": [
+    "태양광 발전 시장 규모, 점유율, 동향 | 성장 보고서 [2032].pdf",
+    "태양광 모듈 시장 규모 및 성장 보고서 (2035년).pdf",
+    "수상 태양광 발전 시장 규모 및 점유율, 성장 보고서 2035.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q40",
+   "target": "h2fc",
+   "query": "수소연료전지 시장 추세 예측 2035",
+   "relevant": [
+    "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf",
+    "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q41",
+   "target": "h2fc",
+   "query": "수소 연료전지 시장 점유율 전망",
+   "relevant": [
+    "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf",
+    "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q42",
+   "target": "h2fc",
+   "query": "PEMFC 수소 전지 시장 규모",
+   "relevant": [
+    "연료전지 시장 규모 및 점유율 | 2025~2034년 성장 전망.pdf",
+    "수소연료전지 시장 규모, 점유율 및 2035년 추세 예측.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q43",
+   "target": "iea",
+   "query": "전 세계 데이터센터 전력 소비 현황과 전망",
+   "relevant": [
+    "세계 데이터센터 전력 수급 현황 및 전망(IEA).pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q44",
+   "target": "iea",
+   "query": "AI 데이터센터 전력 수요 IEA 전망",
+   "relevant": [
+    "세계 데이터센터 전력 수급 현황 및 전망(IEA).pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q45",
+   "target": "iea",
+   "query": "data centre electricity demand outlook",
+   "relevant": [
+    "세계 데이터센터 전력 수급 현황 및 전망(IEA).pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q46",
+   "target": "home",
+   "query": "인공지능으로 가정의 전력 사용량을 예측하는 연구",
+   "relevant": [
+    "인공지능을 사용한 가정용 전력 사용량 예측.pdf.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q47",
+   "target": "home",
+   "query": "가정용 전력 소비 예측 딥러닝 모델",
+   "relevant": [
+    "인공지능을 사용한 가정용 전력 사용량 예측.pdf.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q48",
+   "target": "home",
+   "query": "household electricity load forecasting",
+   "relevant": [
+    "인공지능을 사용한 가정용 전력 사용량 예측.pdf.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q49",
+   "target": "grid",
+   "query": "수도권 데이터센터 분산 배치와 전력계통 안정도",
+   "relevant": [
+    "수도권 집중 데이터센터 분산 배치를 통한 전력계통 안정도 해석.pdf.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q50",
+   "target": "grid",
+   "query": "데이터센터 집중이 계통 안정도에 미치는 영향 해석",
+   "relevant": [
+    "수도권 집중 데이터센터 분산 배치를 통한 전력계통 안정도 해석.pdf.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q51",
+   "target": "grid",
+   "query": "데이터센터 부하를 분산했을 때 전력 계통 해석",
+   "relevant": [
+    "수도권 집중 데이터센터 분산 배치를 통한 전력계통 안정도 해석.pdf.pdf"
+   ],
+   "style": "키워드·영문"
+  },
+  {
+   "id": "q52",
+   "target": "dcdemand",
+   "query": "데이터센터가 늘어나는 지역의 중기 전력수요 예측",
+   "relevant": [
+    "데이터센터 증가 지역의 중기 전력수요예측.pdf.pdf"
+   ],
+   "style": "분야 질의"
+  },
+  {
+   "id": "q53",
+   "target": "dcdemand",
+   "query": "데이터센터 신규 입지의 전력 수요 전망 모델",
+   "relevant": [
+    "데이터센터 증가 지역의 중기 전력수요예측.pdf.pdf"
+   ],
+   "style": "자연어 질문"
+  },
+  {
+   "id": "q54",
+   "target": "dcdemand",
+   "query": "mid-term power demand forecasting with data centers",
+   "relevant": [
+    "데이터센터 증가 지역의 중기 전력수요예측.pdf.pdf"
+   ],
+   "style": "키워드·영문"
+  }
+ ]
+}
